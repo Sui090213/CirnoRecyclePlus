@@ -22,6 +22,20 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
 # ---------------------------------------------------------------------------
+# 环境兜底: 让脚本在没有额外配置的 Windows 上也能直接跑
+# ---------------------------------------------------------------------------
+# 1) 清洗 PATH 里带引号的坏条目: Gradle 会把 PATH 拼进测试 JVM 的
+#    -Djava.library.path, 一个多余的引号就能让单元测试 JVM 直接以
+#    ClassNotFoundException 退出 (本机实测踩过).
+$env:Path = (($env:Path -split ';') | Where-Object { $_ -and ($_ -notmatch '"') }) -join ';'
+
+# 2) 把 .android (debug keystore / 首选项) 指到项目内, 避免用户目录不可写时 AGP 报
+#    AccessDeniedException; 注意不要再设置 ANDROID_PREFS_ROOT, AGP 9 会报冲突.
+$env:ANDROID_USER_HOME = Join-Path $repoRoot 'build\android-home'
+Remove-Item Env:ANDROID_PREFS_ROOT -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $env:ANDROID_USER_HOME | Out-Null
+
+# ---------------------------------------------------------------------------
 # 工具链定位: 参数 > 环境变量 > 本项目工作区里的默认位置
 # ---------------------------------------------------------------------------
 if (-not $JdkHome) { $JdkHome = $env:JAVA_HOME }
