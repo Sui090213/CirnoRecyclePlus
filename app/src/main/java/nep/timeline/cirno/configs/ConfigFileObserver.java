@@ -10,7 +10,10 @@ import nep.timeline.cirno.threads.Handlers;
 
 public class ConfigFileObserver extends FileObserver {
     public ConfigFileObserver() {
-        super(GlobalVars.CONFIG_DIR, DELETE | DELETE_SELF | MODIFY | MOVE_SELF);
+        // 除了 MODIFY/MOVE_SELF, 也监听 CREATE / MOVED_TO / CLOSE_WRITE:
+        // App 写配置用「临时文件 + mv」原子替换, mv 覆盖目标只会产生 MOVED_TO 事件.
+        super(GlobalVars.CONFIG_DIR,
+                DELETE | DELETE_SELF | MODIFY | MOVE_SELF | CREATE | MOVED_TO | CLOSE_WRITE);
         reInit();
         ConfigManager.readConfig();
     }
@@ -29,9 +32,15 @@ public class ConfigFileObserver extends FileObserver {
                 break;
             }
             case MODIFY:
-            case MOVE_SELF: {
+            case MOVE_SELF:
+            case CREATE:
+            case MOVED_TO:
+            case CLOSE_WRITE: {
                 handler.postDelayed(ConfigManager::readConfig, 2000);
+                break;
             }
+            default:
+                break;
         }
     }
 

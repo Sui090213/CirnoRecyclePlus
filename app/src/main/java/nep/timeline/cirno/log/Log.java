@@ -18,9 +18,10 @@ public class Log {
     private final static SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.JAPAN);
     private final static File currentLog = new File(GlobalVars.LOG_DIR, "current.log");
 
-    /** 文件日志失败次数; 连续失败后只写 logcat, 避免每次调用都尝试写文件. */
+    /** 文件日志失败次数; 连续失败后暂停写文件, 过一段时间再重试. */
     private static int fileLogFailures = 0;
-    private static boolean fileLogDisabled = false;
+    /** 文件日志暂停写入的截止时间; 0 表示没有暂停. */
+    private static volatile long fileLogDisabledUntilMs = 0L;
 
     /** current.log 超过该大小时轮转到 last.log, 防止长期运行把日志写满. */
     private static final long MAX_LOG_BYTES = 2L * 1024 * 1024;
@@ -62,14 +63,14 @@ public class Log {
         // logcat 里也留一份, 方便 adb logcat -s CirnoRecycle 直接看.
         android.util.Log.println(android.util.Log.INFO, LOGCAT_TAG, level + " -> " + msg);
 
-        if (fileLogDisabled)
+        if (System.currentTimeMillis() < fileLogDisabledUntilMs)
             return;
 
         Handlers.log.post(() -> fileLog(simpleDateFormat.format(new Date()) + " " + level.toUpperCase() + " -> " + msg));
     }
 
     public static void fileLog(String msg) {
-        if (fileLogDisabled)
+        if (System.currentTimeMillis() < fileLogDisabledUntilMs)
             return;
 
         rotateIfNeeded();
@@ -84,8 +85,10 @@ public class Log {
             android.util.Log.e(LOGCAT_TAG, "写入运行日志失败: " + msg, e);
 
             if (fileLogFailures >= 3) {
-                fileLogDisabled = true;
-                android.util.Log.w(LOGCAT_TAG, "文件日志连续失败 3 次, 后续只写 logcat");
+                fileLogFailures = 0;
+                // 暂停 60 秒后重试, 而不是整个开机周期永久关闭文件日志.
+                fileLogDisabledUntilMs = System.currentTimeMillis() + 60_000L;
+                android.util.Log.w(LOGCAT_TAG, "文件日志连续失败 3 次, 暂停 60 秒后重试");
             }
         }
     }

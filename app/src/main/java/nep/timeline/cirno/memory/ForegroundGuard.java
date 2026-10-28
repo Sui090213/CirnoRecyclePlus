@@ -138,6 +138,9 @@ public class ForegroundGuard {
      *
      * <p>如果发现当前值和「我们上次写入的值」不一致, 说明有别的程序改过, 这时不恢复
      * (避免覆盖别人的设置), 只清理状态文件.
+     *
+     * <p>写失败 / 暂时读不到当前值时**保留状态文件**, 下一个采样周期会再次尝试恢复
+     * (本方法每个 tick 都会被调用), 不能因为一次瞬时错误就把 ROM 原值弄丢.
      */
     public static synchronized void restore() {
         loadState();
@@ -148,28 +151,46 @@ public class ForegroundGuard {
 
         String dir = resolveDir();
         if (dir == null) {
-            clearState();
+            // 这次探测不到目录, 保留状态, 下次再试.
             return;
         }
 
         File highFile = new File(dir, "memory.high");
         String current = readLimit(highFile);
-
-        boolean shouldRestore = appliedLimit > 0L
-                && current != null
-                && parseLimit(current) == appliedLimit
-                && originalValue != null;
-
-        if (shouldRestore) {
-            if (writeValue(highFile, originalValue)) {
-                Log.i("前台压制已恢复: " + highFile + " = " + originalValue);
-            } else {
-                Log.w("前台压制恢复失败: " + highFile + " = " + originalValue);
-            }
-        } else if (current != null && appliedLimit > 0L && parseLimit(current) != appliedLimit) {
-            Log.i("前台压制: memory.high 已被外部修改为 " + current + ", 不再恢复");
+        if (current == null) {
+            // 瞬时读取失败: 保留状态文件, 下次 tick 重试.
+            Log.w("前台压制: 暂时读不到 memory.high, 保留原值记录稍后重试");
+            return;
         }
 
+        long currentLimit = parseLimit(current);
+
+        // 当前值被外部改过 (不是我们写入的值): 别人接管了, 放弃恢复, 只清理状态.
+        if (appliedLimit > 0L && currentLimit != appliedLimit) {
+            Log.i("前台压制: memory.high 已被外部修改为 " + current + ", 不再恢复");
+            clearState();
+            return;
+        }
+
+        if (originalValue == null || appliedLimit <= 0L) {
+            clearState();
+            return;
+        }
+
+        if (!isValidOriginalValue(originalValue)) {
+            // 状态文件损坏 (被截断 / 手改坏), 宁可不写也不要往 memory.high 写一个危险值.
+            Log.w("前台压制: 保存的原值 \"" + originalValue + "\" 非法, 已丢弃状态文件");
+            clearState();
+            return;
+        }
+
+        if (!writeValue(highFile, originalValue)) {
+            // 写失败: 保留状态文件, 下次 tick 继续尝试.
+            Log.w("前台压制恢复失败, 保留原值记录稍后重试: " + highFile + " = " + originalValue);
+            return;
+        }
+
+        Log.i("前台压制已恢复: " + highFile + " = " + originalValue);
         clearState();
     }
 
@@ -225,8 +246,39 @@ public class ForegroundGuard {
                 }
             }
         }
+
         if (originalValue != null && originalValue.isEmpty())
             originalValue = "max";
+
+        // 校验读出来的内容; 损坏的状态文件会让 restore 把危险值写进 memory.high.
+        if (originalValue != null && !isValidOriginalValue(originalValue)) {
+            Log.w("前台压制: 状态文件内容非法 (original=" + originalValue + "), 已丢弃");
+            originalValue = null;
+            appliedLimit = -1L;
+            deleteStateFile();
+            return;
+        }
+        if (appliedLimit > 0L && appliedLimit < MIN_LIMIT_BYTES) {
+            Log.w("前台压制: 状态文件记录的写入值异常 (" + appliedLimit + "), 已丢弃");
+            originalValue = null;
+            appliedLimit = -1L;
+            deleteStateFile();
+        }
+    }
+
+    /** 只接受 "max" 或 >= 512MB 的合法数字, 避免状态文件损坏后写坏系统全局值. */
+    private static boolean isValidOriginalValue(String value) {
+        if (value == null)
+            return false;
+        String trimmed = value.trim();
+        if ("max".equals(trimmed))
+            return true;
+        try {
+            long parsed = Long.parseLong(trimmed);
+            return parsed >= MIN_LIMIT_BYTES;
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
     }
 
     private static void saveState() {
@@ -235,24 +287,40 @@ public class ForegroundGuard {
             return;
         }
 
+        // 先写临时文件再 rename, 避免 system_server 在写一半时崩溃留下半截状态.
         File file = new File(STATE_FILE);
+        File temp = new File(STATE_FILE + ".tmp");
         try {
             File parent = file.getParentFile();
             if (parent != null && !parent.exists())
                 parent.mkdirs();
-            try (FileOutputStream outputStream = new FileOutputStream(file)) {
+            try (FileOutputStream outputStream = new FileOutputStream(temp)) {
                 String content = "original=" + originalValue + "\napplied=" + appliedLimit + "\n";
                 outputStream.write(content.getBytes(StandardCharsets.UTF_8));
                 outputStream.flush();
             }
+            if (!temp.renameTo(file)) {
+                // rename 失败时退化处理: 删旧文件再重命名.
+                if (file.exists())
+                    file.delete();
+                if (!temp.renameTo(file))
+                    Log.w("保存前台压制原值失败: rename 到 " + file);
+            }
         } catch (IOException e) {
             Log.w("保存前台压制原值失败: " + e);
+        } finally {
+            if (temp.exists())
+                temp.delete();
         }
     }
 
     private static void clearState() {
         originalValue = null;
         appliedLimit = -1L;
+        deleteStateFile();
+    }
+
+    private static void deleteStateFile() {
         try {
             File file = new File(STATE_FILE);
             if (file.exists() && !file.delete())

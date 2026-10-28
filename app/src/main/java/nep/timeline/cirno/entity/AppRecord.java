@@ -18,10 +18,13 @@ public class AppRecord {
     private final int userId;
     private final int uid;
     private final ApplicationInfo applicationInfo;
-    private AppState appState;
+    /**
+     * AppState 会被 reset() 整个替换, 内存回收线程会读它, 因此引用本身也要 volatile,
+     * 否则可能读到已被替换掉的旧实例.
+     */
+    private volatile AppState appState;
     /** 冻结状态会被 Freezer / Binder 线程写、被 Memory 线程读, 必须 volatile. */
-    private volatile boolean frozen;
-    private final List<ProcessRecord> processRecords = new CopyOnWriteArrayList<>();
+    private volatile boolean frozen;    private final List<ProcessRecord> processRecords = new CopyOnWriteArrayList<>();
 
     public AppRecord(ApplicationInfo applicationInfo) {
         this.packageName = applicationInfo.packageName;

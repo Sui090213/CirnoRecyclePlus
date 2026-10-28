@@ -115,6 +115,9 @@ fun ApplicationScreen(activity: ApplicationActivity) {
                                     val settings = GlobalVars.applicationSettings
                                         ?: nep.timeline.cirno.configs.settings.ApplicationSettings()
                                             .also { GlobalVars.applicationSettings = it }
+                                    // JSON 里 "whiteApps": null 时兜底成可变集合, 避免 NPE.
+                                    if (settings.whiteApps == null)
+                                        settings.whiteApps = java.util.LinkedHashSet()
                                     if (checked)
                                         settings.whiteApps.add(key)
                                     else

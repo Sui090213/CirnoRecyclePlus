@@ -151,7 +151,7 @@ Memory HandlerThread（后台优先级）每 sampleIntervalMs 跑一次
 # 一键构建 APK + 跑单元测试 + 打包模块 zip（Windows）
 powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
 
-# 一键构建（Linux / CI；macOS 需要 GNU sed/sha256sum，例如 brew install coreutils）
+# 一键构建（Linux / macOS / CI；macOS 自带 shasum，脚本已做兼容）
 bash scripts/package-module.sh
 ```
 

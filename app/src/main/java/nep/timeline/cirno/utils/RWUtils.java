@@ -67,6 +67,10 @@ public class RWUtils {
 
         try (PrintWriter writer = new PrintWriter(SuFileOutputStream.open(new SuFile(temp)), false)) {
             writer.write(value);
+            writer.flush();
+            if (writer.checkError()) {
+                throw new IOException("写入临时配置文件失败: " + temp);
+            }
         }
 
         Shell.Result result = Shell.cmd("mv -f '" + temp + "' '" + target + "'").exec();
@@ -74,7 +78,17 @@ public class RWUtils {
             // 某些环境可能禁止 root shell 的 mv (极少数), 退化为直接覆盖写.
             try (PrintWriter writer = new PrintWriter(SuFileOutputStream.open(file), false)) {
                 writer.write(value);
+                writer.flush();
+                if (writer.checkError()) {
+                    throw new IOException("直接写入配置文件失败: " + target);
+                }
             }
+        }
+
+        // 读回校验: PrintWriter / root shell 都可能静默失败, 不校验的话 UI 会以为保存成功.
+        String readBack = readConfig(new SuFile(target));
+        if (readBack == null || !readBack.equals(value)) {
+            throw new IOException("配置写入校验失败: " + target);
         }
     }
 

@@ -398,7 +398,15 @@ fun MemoryScreen(activity: MemoryActivity) {
                         value = current.psiSomeThreshold.toFloat(),
                         range = 1f..30f,
                         steps = 28,
-                        onChangeFinished = { value -> update { it.copy(psiSomeThreshold = value.toDouble()) } }
+                        onChangeFinished = { value ->
+                            // 提前停止阈值不能高于触发阈值, 否则 sanitize 会静默改成别的值.
+                            update {
+                                it.copy(
+                                    psiSomeThreshold = value.toDouble(),
+                                    psiStopThreshold = minOf(it.psiStopThreshold, value.toDouble())
+                                )
+                            }
+                        }
                     )
                     SliderRow(
                         title = "采样间隔",
@@ -406,7 +414,15 @@ fun MemoryScreen(activity: MemoryActivity) {
                         value = current.sampleIntervalMs / 1000f,
                         range = 2f..30f,
                         steps = 27,
-                        onChangeFinished = { value -> update { it.copy(sampleIntervalMs = (value * 1000).toInt()) } }
+                        onChangeFinished = { value ->
+                            update {
+                                val newInterval = (value * 1000).toInt()
+                                it.copy(
+                                    sampleIntervalMs = newInterval,
+                                    cooldownMs = maxOf(it.cooldownMs, newInterval)
+                                )
+                            }
+                        }
                     )
                     SliderRow(
                         title = "冷却时间",
@@ -414,7 +430,14 @@ fun MemoryScreen(activity: MemoryActivity) {
                         value = current.cooldownMs / 1000f,
                         range = 5f..120f,
                         steps = 22,
-                        onChangeFinished = { value -> update { it.copy(cooldownMs = (value * 1000).toInt()) } }
+                        onChangeFinished = { value ->
+                            // 冷却不能小于采样间隔, 否则 sanitize 会静默拉高, UI 和落盘值不一致.
+                            update {
+                                it.copy(
+                                    cooldownMs = maxOf((value * 1000).toInt(), it.sampleIntervalMs)
+                                )
+                            }
+                        }
                     )
                     SliderRow(
                         title = "高压时连续回收轮数",

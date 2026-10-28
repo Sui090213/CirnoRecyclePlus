@@ -86,12 +86,20 @@ fun MainScreen() {
     }
 
     // 读取配置要走 root, 放在 IO 线程, 避免首次进入界面时卡住主线程.
-    val readConfig = remember { mutableStateOf(false) }
+    // rootOk: 有没有 root 权限; configOk: 配置文件是否已经生成并成功读取.
+    val rootOk = remember { mutableStateOf(false) }
+    val configOk = remember { mutableStateOf(false) }
     val apps = remember { mutableStateOf<List<ApplicationInfo>>(emptyList()) }
 
     LaunchedEffect(Unit) {
-        readConfig.value = withContext(Dispatchers.IO) {
-            runCatching { ConfigManager.manager.readConfigSU() }.getOrDefault(false)
+        val hasRoot = withContext(Dispatchers.IO) {
+            runCatching { Shell.getShell().isRoot }.getOrDefault(false)
+        }
+        rootOk.value = hasRoot
+        if (hasRoot) {
+            configOk.value = withContext(Dispatchers.IO) {
+                runCatching { ConfigManager.manager.readConfigSU() }.getOrDefault(false)
+            }
         }
         // 应用列表和图标加载也放到 IO 线程, 避免主线程批量 loadIcon 造成首开卡顿.
         val loaded = withContext(Dispatchers.IO) { getInstalledApps(context) }
@@ -122,7 +130,7 @@ fun MainScreen() {
         val white = remember(appInfo) { AppConfigs.isWhiteApp(appInfo.packageName, userId) }
 
         Row(
-            modifier = if (Shell.getShell().isRoot && readConfig.value)
+            modifier = if (rootOk.value)
                 Modifier
                     .fillMaxWidth()
                     .padding(8.dp).clickable(onClick = { enterAppPage(appName, userId.toString(), appInfo.packageName) })
@@ -190,19 +198,26 @@ fun MainScreen() {
                                 overflow = TextOverflow.Ellipsis
                             )
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                // 只有真的拿到 root 并成功读到配置才显示「已激活」;
-                                // 没有 root / 配置读失败时显示灰色「未激活」, 别再误导用户.
+                                // 三态: 已激活 / 等待模块加载(有 root 但配置还没生成) / 未激活(没有 root).
+                                val active = rootOk.value && configOk.value
+                                val dotColor = when {
+                                    active -> Color(0xFF4CAF50)
+                                    rootOk.value -> Color(0xFFFFA000)
+                                    else -> Color.Gray
+                                }
+                                val statusText = when {
+                                    active -> "已激活"
+                                    rootOk.value -> "等待模块加载"
+                                    else -> "未激活(需要 root)"
+                                }
                                 Box(
                                     modifier = Modifier
                                         .size(10.dp)
-                                        .background(
-                                            color = if (readConfig.value) Color(0xFF4CAF50) else Color.Gray,
-                                            shape = CircleShape
-                                        )
+                                        .background(color = dotColor, shape = CircleShape)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (readConfig.value) "已激活" else "未激活(需要 root)",
+                                    text = statusText,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -258,7 +273,7 @@ fun MainScreen() {
                     // 应用多时不会一次性加载全部图标.
                     items(
                         items = sortedApps,
-                        key = { appInfo -> appInfo.packageName + "#" + PKGUtils.getUserId(appInfo.uid) }
+                        key = { appInfo -> appInfo.uid.toString() + "#" + appInfo.packageName }
                     ) { appInfo ->
                         AppItem(appInfo, packageManager)
                     }

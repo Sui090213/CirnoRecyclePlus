@@ -43,7 +43,7 @@
 - **前台压制原值持久化**：`memory.high` 的 ROM 原值原来只存在进程内静态字段里，system_server 软重启后会把自己的写入值当成 ROM 原值，导致关开关也恢复不回 `max`。现在原值/写入值持久化到 `/data/misc/CirnoRecycle/foreground_guard.orig`，软重启后仍能正确恢复；检测到值被外部改动时只清理状态、不覆盖别人的设置。
 - **设置写入丢失**：设置页的持久化原来挂在 composition scope 上，点完开关立刻返回会取消写入；多次并发写还可能旧快照覆盖新快照。现在统一走进程级单线程写队列（`ConfigWriter`），并用「临时文件 + mv」原子替换 JSON。
 - **配置损坏保护**：配置文件存在但解析失败时，system_server 侧保留旧配置；App 侧检测到损坏会锁定写入并要求用户确认，避免默认值整份覆盖。
-- **主界面**：应用列表改为 `LazyColumn items()` 按需组合、图标 `remember` 缓存并在 IO 线程加载；「已激活」状态改为按真实 root/配置读取结果显示。
+- **主界面**：应用列表枚举在 IO 线程完成，`LazyColumn items()` 按需组合可见项、图标 `remember` 缓存；「已激活」改为三态（已激活 / 等待模块加载 / 未激活需要 root）。
 - `ConfigManager.readConfig()` 每次读完都写回配置，配合 `ConfigFileObserver` 会形成「写 → 事件 → 读 → 再写」的 2 秒死循环；改为只读。
 - `Log.fileLog` 写文件失败时递归调用 `Log.e`，在 App 进程没有 root 权限时会无限 post；改为只写 logcat，连续失败 3 次后关闭文件日志。`current.log` 超过 2MB 时轮转为 `last.log`。
 - 内存回收日志：空转 / 没有实际动作时不再打印「内存回收完成」，避免持续写日志。

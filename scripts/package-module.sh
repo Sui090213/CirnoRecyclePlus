@@ -77,11 +77,11 @@ cp -a "$MODULE_DIR/." "$STAGE/"
 mkdir -p "$STAGE/apk"
 cp -f "$APK" "$STAGE/apk/CirnoRecyclePlus.apk"
 
-# 统一换行符为 LF (macOS 的 sed 不支持 sed -i, 这里用「临时文件 + mv」的可移植写法)
+# 统一换行符为 LF (tr 在 GNU / BSD / macOS 上都能用, 避免 GNU 专用 sed -i)
 find "$STAGE" -type f \( -name '*.sh' -o -name '*.prop' -o -name '*.md' -o -name '*.rule' -o -name 'update-binary' -o -name 'updater-script' \) -print0 |
     while IFS= read -r -d '' file; do
         if grep -q $'\r' "$file" 2>/dev/null; then
-            sed 's/\r$//' "$file" >"$file.tmp" && mv -f "$file.tmp" "$file"
+            tr -d '\r' <"$file" >"$file.tmp" && mv -f "$file.tmp" "$file"
         fi
     done
 

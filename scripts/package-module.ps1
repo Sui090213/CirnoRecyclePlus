@@ -50,15 +50,40 @@ if ($Apk -match 'unsigned\.apk$') {
 
 $apksigner = $null
 if ($env:ANDROID_HOME) {
-    $candidate = Join-Path $env:ANDROID_HOME 'build-tools\36.0.0\apksigner.bat'
-    if (Test-Path $candidate) { $apksigner = $candidate }
+    $buildToolsRoot = Join-Path $env:ANDROID_HOME 'build-tools'
+    if (Test-Path $buildToolsRoot) {
+        $buildToolsDirs = Get-ChildItem $buildToolsRoot -Directory -ErrorAction SilentlyContinue |
+            Sort-Object { try { [version]($_.Name -replace '[^0-9.]', '') } catch { [version]'0.0' } } -Descending
+        foreach ($dir in $buildToolsDirs) {
+            $candidate = Join-Path $dir.FullName 'apksigner.bat'
+            if (Test-Path $candidate) {
+                $apksigner = $candidate
+                break
+            }
+        }
+    }
 }
+
 if ($apksigner) {
-    $verifyOutput = & $apksigner verify --print-certs $Apk 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "APK 签名校验失败, 拒绝打包:`n$verifyOutput"
+    # 注意: JDK 25 的 apksigner 会向 stderr 打 "restricted method" 警告.
+    # PowerShell 5.1 在 $ErrorActionPreference='Stop' 下会把 native 的 stderr 当成终止性
+    # NativeCommandError, 所以这里临时改成 Continue, 只根据 $LASTEXITCODE 判断结果.
+    $oldErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $verifyOutput = & $apksigner verify --print-certs $Apk 2>&1
+        $verifyExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+    }
+    if ($verifyExitCode -ne 0) {
+        throw "APK 签名校验失败, 拒绝打包:`n$($verifyOutput -join "`n")"
     }
     Write-Host "APK 签名校验通过"
+}
+else {
+    Write-Warning "没找到 apksigner, 跳过 APK 签名校验 (建议设置 ANDROID_HOME 指向 Android SDK)"
 }
 
 # ---------------------------------------------------------------------------
