@@ -42,6 +42,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import nep.timeline.cirno.GlobalVars
+import nep.timeline.cirno.MemoryActivity
 import nep.timeline.cirno.configs.ConfigManager
 import nep.timeline.cirno.configs.settings.GlobalSettings
 import nep.timeline.cirno.memory.MemorySettings
@@ -126,7 +127,8 @@ private fun MemoryUiConfig.applyTo(settings: MemorySettings) {
     settings.foregroundColdCompact = foregroundColdCompact
     settings.foregroundColdIntervalMs = foregroundColdIntervalMs
     settings.foregroundReclaim = foregroundReclaim
-    settings.requestSeq = requestSeq
+    // 注意: requestSeq 不在这里写, 由 requestReclaimOnce() 单独处理,
+    // 否则普通开关保存时会把过期的「立即回收」时间戳又写回去, 导致重复触发.
 }
 
 private fun loadUiConfig(): MemoryUiConfig {
@@ -186,10 +188,8 @@ fun MemoryScreen(activity: MemoryActivity) {
         refreshLog()
     }
 
-    fun update(block: (MemoryUiConfig) -> MemoryUiConfig) {
-        val old = config ?: return
-        val new = block(old)
-        config = new
+    /** 普通开关的持久化: 不包含 requestSeq. */
+    fun persist(new: MemoryUiConfig) {
         scope.launch(Dispatchers.IO) {
             runCatching {
                 synchronized(WRITE_LOCK) {
@@ -202,6 +202,35 @@ fun MemoryScreen(activity: MemoryActivity) {
                 }
             }.onFailure {
                 errorText = "写入配置失败: ${it.message}"
+            }
+        }
+    }
+
+    fun update(block: (MemoryUiConfig) -> MemoryUiConfig) {
+        val old = config ?: return
+        val new = block(old)
+        config = new
+        persist(new)
+    }
+
+    /** 「立即回收一次」: 只写 requestSeq, 由 system_server 检测到变化后强制跑一轮. */
+    fun requestReclaimOnce() {
+        val old = config ?: return
+        val seq = System.currentTimeMillis()
+        if (seq <= old.requestSeq)
+            return
+        config = old.copy(requestSeq = seq)
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                synchronized(WRITE_LOCK) {
+                    val global = GlobalVars.globalSettings
+                        ?: GlobalSettings().also { GlobalVars.globalSettings = it }
+                    val memory = global.memory ?: MemorySettings().also { global.memory = it }
+                    memory.requestSeq = seq
+                    ConfigManager.manager.saveConfigSU()
+                }
+            }.onFailure {
+                errorText = "写入回收请求失败: ${it.message}"
             }
         }
     }
@@ -402,7 +431,7 @@ fun MemoryScreen(activity: MemoryActivity) {
                     ) {
                         Button(
                             onClick = {
-                                update { it.copy(requestSeq = System.currentTimeMillis()) }
+                                requestReclaimOnce()
                             },
                             enabled = current.enabled,
                             modifier = Modifier.weight(1f)

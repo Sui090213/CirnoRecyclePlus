@@ -9,7 +9,6 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import nep.timeline.cirno.GlobalVars;
-import nep.timeline.cirno.configs.ConfigManager;
 import nep.timeline.cirno.configs.settings.GlobalSettings;
 import nep.timeline.cirno.entity.AppRecord;
 import nep.timeline.cirno.entity.AppState;
@@ -59,6 +58,7 @@ public class MemoryService {
     private static volatile long lastNoCandidateLogElapsed = 0L;
     private static volatile long lastRequestSeq = 0L;
     private static volatile int lastLevel = -1;
+    private static boolean requestBaselineInitialized = false;
 
     private static boolean unsupportedLogged = false;
     private static boolean psiUnsupportedLogged = false;
@@ -172,22 +172,25 @@ public class MemoryService {
 
     /**
      * 检测「立即回收一次」请求. 序号变化时返回 true, 由调用方忽略 PSI 阈值与冷却.
+     *
+     * <p>不把 JSON 里的序号清零: 清零需要 system_server 回写配置, 可能覆盖掉 App 刚改的
+     * 其它字段. 这里改成「首次采样只记录基线, 之后序号变化才触发」, 重启后残留的旧序号
+     * 会被当成基线忽略, 不会在开机时莫名其妙回收一轮.
      */
     private static boolean handleForcedRequest(MemorySettings settings) {
         long requestSeq = settings.requestSeq;
+
+        if (!requestBaselineInitialized) {
+            requestBaselineInitialized = true;
+            lastRequestSeq = requestSeq;
+            return false;
+        }
+
         if (requestSeq == 0L || requestSeq == lastRequestSeq)
             return false;
 
         lastRequestSeq = requestSeq;
         Log.i("收到手动回收请求 (seq=" + requestSeq + "), 立即执行一轮回收");
-
-        // 清掉序号, 避免重启后又一次触发. 写回配置会触发 ConfigFileObserver 重载, 属于预期行为.
-        settings.requestSeq = 0L;
-        try {
-            ConfigManager.saveConfig();
-        } catch (Throwable throwable) {
-            Log.w("清除手动回收标记失败: " + throwable);
-        }
         return true;
     }
 

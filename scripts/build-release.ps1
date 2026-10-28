@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$JdkHome = '',
     [string]$AndroidSdk = '',
     [switch]$SkipUnitTests

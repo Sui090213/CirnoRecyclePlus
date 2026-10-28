@@ -96,17 +96,20 @@ public class ForegroundGuard {
         if (romLimit > 0L && romLimit <= limit) {
             // ROM 自己设置的限制更严格, 尊重 ROM, 不覆盖.
             Log.i("前台压制: ROM 已设置更严格的 memory.high=" + current + ", 跳过");
-            appliedLimit = limit;
             originalValue = current;
+            appliedLimit = limit;
             return;
         }
 
+        boolean firstApply = appliedLimit < 0L;
         if (!writeValue(highFile, Long.toString(limit))) {
             logWriteFailed("写入 " + highFile + " 失败");
             return;
         }
 
-        originalValue = current;
+        // 只在第一次写入时记录 ROM 的原始值; 之后改比例不能把「我们上次写的值」当成原值.
+        if (firstApply)
+            originalValue = current;
         appliedLimit = limit;
         Log.i("前台压制已启用: " + dir + "/memory.high = " + limit
                 + " (" + formatPercent(ratio) + " of " + formatBytes(total) + "), 原值=" + current);
