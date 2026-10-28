@@ -39,6 +39,29 @@ if (-not $Apk -or -not (Test-Path $Apk)) {
 }
 
 # ---------------------------------------------------------------------------
+# 拒绝把未签名 APK 打进模块
+#
+# 未签名的 APK 在设备上执行 pm install 一定会失败, 用户刷完模块会发现手机上没有 App.
+# 这里提前拦下来, 而不是静默打一个坏包.
+# ---------------------------------------------------------------------------
+if ($Apk -match 'unsigned\.apk$') {
+    throw "拒绝打包未签名 APK: $Apk。请先配置 signing/cirno-release.jks 并执行 assembleRelease。"
+}
+
+$apksigner = $null
+if ($env:ANDROID_HOME) {
+    $candidate = Join-Path $env:ANDROID_HOME 'build-tools\36.0.0\apksigner.bat'
+    if (Test-Path $candidate) { $apksigner = $candidate }
+}
+if ($apksigner) {
+    $verifyOutput = & $apksigner verify --print-certs $Apk 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "APK 签名校验失败, 拒绝打包:`n$verifyOutput"
+    }
+    Write-Host "APK 签名校验通过"
+}
+
+# ---------------------------------------------------------------------------
 # 读取模块版本
 # ---------------------------------------------------------------------------
 $propFile = Join-Path $moduleDir 'module.prop'

@@ -19,7 +19,8 @@ public class AppRecord {
     private final int uid;
     private final ApplicationInfo applicationInfo;
     private AppState appState;
-    private boolean frozen;
+    /** 冻结状态会被 Freezer / Binder 线程写、被 Memory 线程读, 必须 volatile. */
+    private volatile boolean frozen;
     private final List<ProcessRecord> processRecords = new CopyOnWriteArrayList<>();
 
     public AppRecord(ApplicationInfo applicationInfo) {

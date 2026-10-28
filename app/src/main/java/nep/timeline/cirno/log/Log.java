@@ -22,6 +22,10 @@ public class Log {
     private static int fileLogFailures = 0;
     private static boolean fileLogDisabled = false;
 
+    /** current.log 超过该大小时轮转到 last.log, 防止长期运行把日志写满. */
+    private static final long MAX_LOG_BYTES = 2L * 1024 * 1024;
+    private static long lastRotateCheckMs = 0L;
+
     static {
         i("设备Android SDK: " + Build.VERSION.SDK_INT);
     }
@@ -68,6 +72,8 @@ public class Log {
         if (fileLogDisabled)
             return;
 
+        rotateIfNeeded();
+
         try {
             RWUtils.writeStringToFile(currentLog, msg, true);
             fileLogFailures = 0;
@@ -81,6 +87,28 @@ public class Log {
                 fileLogDisabled = true;
                 android.util.Log.w(LOGCAT_TAG, "文件日志连续失败 3 次, 后续只写 logcat");
             }
+        }
+    }
+
+    private static void rotateIfNeeded() {
+        long now = System.currentTimeMillis();
+        if (now - lastRotateCheckMs < 60_000L)
+            return;
+        lastRotateCheckMs = now;
+
+        try {
+            if (!currentLog.exists() || currentLog.length() < MAX_LOG_BYTES)
+                return;
+
+            File lastLog = new File(GlobalVars.LOG_DIR, "last.log");
+            if (lastLog.exists() && !lastLog.delete())
+                return;
+            if (!currentLog.renameTo(lastLog))
+                return;
+
+            android.util.Log.i(LOGCAT_TAG, "current.log 超过 2MB, 已轮转为 last.log");
+        } catch (Throwable ignored) {
+            // 轮转失败不影响写日志.
         }
     }
 }

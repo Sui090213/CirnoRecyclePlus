@@ -108,6 +108,7 @@ public class ConfigManagerJson {
      */
     public boolean readConfigSU() {
         boolean filesPresent = true;
+        GlobalVars.configCorrupted = false;
 
         try {
             SuFile globalFile = new SuFile(GlobalVars.CONFIG_DIR, globalSettingsName);
@@ -116,9 +117,12 @@ public class ConfigManagerJson {
                 if (GlobalVars.globalSettings == null)
                     GlobalVars.globalSettings = new GlobalSettings();
             } else if (!applyGlobalSettings(RWUtils.readConfig(globalFile))) {
+                GlobalVars.configCorrupted = true;
                 Log.w("App 读取 GlobalSettings.json 失败, 保留上一次的配置");
-                if (GlobalVars.globalSettings == null)
+                if (GlobalVars.globalSettings == null) {
+                    GlobalVars.globalSettings = new GlobalSettings();
                     filesPresent = false;
+                }
             }
 
             SuFile applicationFile = new SuFile(GlobalVars.CONFIG_DIR, applicationSettingsName);
@@ -127,11 +131,15 @@ public class ConfigManagerJson {
                 if (GlobalVars.applicationSettings == null)
                     GlobalVars.applicationSettings = new ApplicationSettings();
             } else if (!applyApplicationSettings(RWUtils.readConfig(applicationFile))) {
+                GlobalVars.configCorrupted = true;
                 Log.w("App 读取 ApplicationSettings.json 失败, 保留上一次的配置");
-                if (GlobalVars.applicationSettings == null)
+                if (GlobalVars.applicationSettings == null) {
+                    GlobalVars.applicationSettings = new ApplicationSettings();
                     filesPresent = false;
+                }
             }
         } catch (RuntimeException e) {
+            GlobalVars.configCorrupted = true;
             Log.w("App 读取配置异常, 保留上一次的配置: " + e);
         }
 
@@ -152,13 +160,15 @@ public class ConfigManagerJson {
             GlobalSettings globalSettings = GlobalVars.globalSettings;
             if (globalSettings != null) {
                 String globalConfigStr = gson.toJson(GlobalVars.globalSettings);
-                RWUtils.writeStringToFileSU(new SuFile(GlobalVars.CONFIG_DIR, globalSettingsName), globalConfigStr, false);
+                RWUtils.writeStringToFileSUAtomic(new SuFile(GlobalVars.CONFIG_DIR, globalSettingsName), globalConfigStr);
             }
             ApplicationSettings applicationSettings = GlobalVars.applicationSettings;
             if (applicationSettings != null) {
                 String applicationConfigStr = gson.toJson(GlobalVars.applicationSettings);
-                RWUtils.writeStringToFileSU(new SuFile(GlobalVars.CONFIG_DIR, applicationSettingsName), applicationConfigStr, false);
+                RWUtils.writeStringToFileSUAtomic(new SuFile(GlobalVars.CONFIG_DIR, applicationSettingsName), applicationConfigStr);
             }
+            // 写入成功后配置就是完整可读的了, 清掉「损坏」标记.
+            GlobalVars.configCorrupted = false;
         } catch (IOException e) {
             Log.e("Save Config", e);
         }

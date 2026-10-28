@@ -108,7 +108,8 @@ cgroup memory.current < minCgroupBytes   -> 跳过（收益太低）
 
 - 先找方法名 `compactApp`、第一个参数是 `com.android.server.am.ProcessRecord` 的重载；
 - 后续参数按类型填：`boolean` → `true`（强制压缩），`int` → `CompactSource` 常量；
-- 调用时按框架习惯持有 AMS 的 `mProcLock`；
+- 部分 Android 版本把 `CompactProfile` / `CompactSource` 做成了**枚举**，这时按枚举常量名做保守匹配（`FULL` / `APP` 等），匹配不到就用第一个常量；
+- 调用时按框架习惯持有 AMS 的 `mProcLock`（每个进程一次调用，调用之间会释放锁）；
 - 方法找不到 / 系统没开压缩（`mUseCompaction=false`）/ 调用抛异常时只打一次日志并跳过。
 
 ## 7. 前台内存压制（实验性，默认关）
@@ -124,7 +125,8 @@ cgroup memory.current < minCgroupBytes   -> 跳过（收益太低）
 - 安全约定：
   - 只改 `memory.high`，**绝不改 `memory.max`**；
   - ROM 自己已经设了更严格的 `memory.high` 时**不覆盖**；
-  - 记录原始值（`max` 或数字），关闭开关时恢复；
+  - **ROM 原值和「我们写入的值」都会持久化到 `/data/misc/CirnoRecycle/foreground_guard.orig`**，这样即使 system_server 软重启（LSPosed 环境常见），也不会把自己的写入值误当成 ROM 原值；关闭开关时按记录恢复；
+  - 检测到 `memory.high` 被其他程序改过时，只清理状态文件、不强行恢复（避免覆盖别人的设置）；
   - 计算出的上限低于 512MB 时拒绝写入；
   - 找不到 top-app/foreground 的 `memory.high` 文件时打印一次警告并跳过，不影响其它功能。
 
@@ -156,9 +158,9 @@ cgroup memory.current < minCgroupBytes   -> 跳过（收益太低）
 
 ## 9. 配置
 
-配置在 `/data/misc/CirnoRecycle/GlobalSettings.json` 的 `memory` 字段，字段含义见 README 的「设置项说明」。App 内的设置页会通过 root 读写这个 JSON，system_server 的 `ConfigFileObserver` 监听目录变化，2 秒内热重载。
+配置在 `/data/misc/CirnoRecycle/GlobalSettings.json` 的 `memory` 字段，字段含义见 README 的「设置项说明」。App 内的设置页会通过 root 读写这个 JSON（单线程写队列 + 临时文件原子替换），system_server 的 `ConfigFileObserver` 监听目录变化，2 秒内热重载。
 
-字段都带默认值：旧配置缺字段时 Gson 反序列化会自动用默认值，升级不需要手动迁移。
+字段都带默认值：旧配置缺字段时 Gson 反序列化会自动用默认值，升级不需要手动迁移。配置读取失败时 system_server 会保留上一次的配置，App 侧会锁定写入并提示用户，避免损坏的配置被默认值覆盖。
 
 ## 10. 验证方法
 

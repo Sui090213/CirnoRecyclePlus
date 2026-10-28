@@ -5,6 +5,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
+import nep.timeline.cirno.GlobalVars;
 import nep.timeline.cirno.log.Log;
 
 /**
@@ -13,7 +14,7 @@ import nep.timeline.cirno.log.Log;
  * <p>内核语义: {@code memory.high} 是软上限, 超过之后内核会先对分配方限流并积极回收,
  * 而不是像 {@code memory.max} 那样直接 OOM kill. 把它压在一个「正常使用不会碰到, 但
  * 前台应用失控膨胀时能兜底」的位置, 可以在整机内存耗尽前先把前台应用的内存增长刹住,
- * 给后台/冻结应用留出空间.
+ * 给后台 / 冻结应用留出空间.
  *
  * <p>不同 ROM 的 cgroup 布局差异很大, 因此这里对候选路径逐个探测, 找不到
  * {@code memory.high} 就自动跳过并只打印一次警告, 不会影响其它功能.
@@ -22,7 +23,10 @@ import nep.timeline.cirno.log.Log;
  * <ul>
  *     <li>只改 {@code memory.high}, 绝不改 {@code memory.max};</li>
  *     <li>如果 ROM 自己已经设置了更严格的 memory.high, 不覆盖;</li>
- *     <li>记录原始值, 关闭开关时恢复;</li>
+ *     <li>写入前把 ROM 的原始值持久化到 {@code /data/misc/CirnoRecycle/foreground_guard.orig},
+ *         这样即使 system_server 软重启 (LSPosed 常见) 也不会把「我们自己写的值」当成原值;
+ *     </li>
+ *     <li>关闭开关时恢复原值; 检测到值被外部改动时不恢复, 只清理状态文件;</li>
  *     <li>上限低于 512MB 时拒绝写入, 避免把设备写死.</li>
  * </ul>
  */
@@ -39,11 +43,17 @@ public class ForegroundGuard {
 
     private static final long MIN_LIMIT_BYTES = 512L * 1024 * 1024;
 
+    /** 原始值 / 我们写入值的持久化文件 (system_server 软重启后仍能正确恢复). */
+    private static final String STATE_FILE = GlobalVars.CONFIG_DIR + "/foreground_guard.orig";
+
     private static boolean resolved = false;
     private static String cgroupDir;
     private static boolean unsupportedLogged = false;
+    private static boolean romStricterLogged = false;
     private static boolean writeFailedLogged = false;
+    private static String lastWriteError;
 
+    private static boolean stateLoaded = false;
     private static String originalValue;
     private static long appliedLimit = -1L;
 
@@ -73,66 +83,94 @@ public class ForegroundGuard {
 
         long limit = (long) (total * ratio);
         if (limit < MIN_LIMIT_BYTES) {
-            logWriteFailed("计算出的上限小于 512MB, 已拒绝写入 (" + CgroupMemory.readText(new File(dir, "memory.high")) + ")");
+            logWriteFailed("计算出的上限小于 512MB, 已拒绝写入");
             return;
         }
 
         File highFile = new File(dir, "memory.high");
-        String current = CgroupMemory.readText(highFile);
+        String current = readLimit(highFile);
         if (current == null) {
             logWriteFailed("读取 memory.high 失败");
             return;
         }
-        current = current.trim();
-        if (current.isEmpty())
-            current = "max";
+
+        loadState();
+
+        // 已经有我们写入的状态, 但文件里的值被外部改掉了: 认为外部接管, 丢弃旧状态.
+        if (originalValue != null && appliedLimit > 0L && parseLimit(current) != appliedLimit) {
+            Log.i("前台压制: memory.high 被外部修改为 " + current + ", 丢弃旧的原值记录");
+            clearState();
+        }
+
+        // 没有状态记录时, 当前值就是 ROM 的原始值.
+        if (originalValue == null) {
+            long romLimit = parseLimit(current);
+            if (romLimit > 0L && romLimit <= limit) {
+                // ROM 自己设置的限制更严格, 尊重 ROM, 不覆盖.
+                appliedLimit = -1L;
+                if (!romStricterLogged) {
+                    romStricterLogged = true;
+                    Log.i("前台压制: ROM 已设置更严格的 memory.high=" + current + ", 跳过");
+                }
+                return;
+            }
+            originalValue = current;
+        }
 
         if (limit == appliedLimit) {
-            // 已经写过了, 不重复写.
+            // 已经是我们写入的值, 不重复写.
             return;
         }
 
-        long romLimit = parseLimit(current);
-        if (romLimit > 0L && romLimit <= limit) {
-            // ROM 自己设置的限制更严格, 尊重 ROM, 不覆盖.
-            Log.i("前台压制: ROM 已设置更严格的 memory.high=" + current + ", 跳过");
-            originalValue = current;
-            appliedLimit = limit;
-            return;
-        }
-
-        boolean firstApply = appliedLimit < 0L;
         if (!writeValue(highFile, Long.toString(limit))) {
             logWriteFailed("写入 " + highFile + " 失败");
             return;
         }
 
-        // 只在第一次写入时记录 ROM 的原始值; 之后改比例不能把「我们上次写的值」当成原值.
-        if (firstApply)
-            originalValue = current;
         appliedLimit = limit;
+        saveState();
         Log.i("前台压制已启用: " + dir + "/memory.high = " + limit
-                + " (" + formatPercent(ratio) + " of " + formatBytes(total) + "), 原值=" + current);
+                + " (" + formatPercent(ratio) + " of " + formatBytes(total) + "), 原值=" + originalValue);
     }
 
     /**
      * 恢复原始 memory.high. 关闭开关 / 总开关时调用.
+     *
+     * <p>如果发现当前值和「我们上次写入的值」不一致, 说明有别的程序改过, 这时不恢复
+     * (避免覆盖别人的设置), 只清理状态文件.
      */
     public static synchronized void restore() {
-        if (appliedLimit < 0L || cgroupDir == null || originalValue == null) {
-            appliedLimit = -1L;
+        loadState();
+
+        if (originalValue == null && appliedLimit < 0L) {
             return;
         }
 
-        File highFile = new File(cgroupDir, "memory.high");
-        if (writeValue(highFile, originalValue)) {
-            Log.i("前台压制已恢复: " + highFile + " = " + originalValue);
-        } else {
-            Log.w("前台压制恢复失败: " + highFile + " = " + originalValue);
+        String dir = resolveDir();
+        if (dir == null) {
+            clearState();
+            return;
         }
 
-        appliedLimit = -1L;
-        originalValue = null;
+        File highFile = new File(dir, "memory.high");
+        String current = readLimit(highFile);
+
+        boolean shouldRestore = appliedLimit > 0L
+                && current != null
+                && parseLimit(current) == appliedLimit
+                && originalValue != null;
+
+        if (shouldRestore) {
+            if (writeValue(highFile, originalValue)) {
+                Log.i("前台压制已恢复: " + highFile + " = " + originalValue);
+            } else {
+                Log.w("前台压制恢复失败: " + highFile + " = " + originalValue);
+            }
+        } else if (current != null && appliedLimit > 0L && parseLimit(current) != appliedLimit) {
+            Log.i("前台压制: memory.high 已被外部修改为 " + current + ", 不再恢复");
+        }
+
+        clearState();
     }
 
     private static String resolveDir() {
@@ -148,6 +186,82 @@ public class ForegroundGuard {
         return cgroupDir;
     }
 
+    /** 读取 memory.high 并去掉换行; 读不到返回 null. */
+    private static String readLimit(File file) {
+        String text = CgroupMemory.readText(file);
+        if (text == null)
+            return null;
+        String value = text.trim();
+        if (value.isEmpty())
+            return "max";
+        int newline = value.indexOf('\n');
+        if (newline >= 0)
+            value = value.substring(0, newline).trim();
+        return value;
+    }
+
+    // ---------------------------------------------------------------------
+    // 状态持久化
+    // ---------------------------------------------------------------------
+
+    private static void loadState() {
+        if (stateLoaded)
+            return;
+        stateLoaded = true;
+
+        String text = CgroupMemory.readText(new File(STATE_FILE));
+        if (text == null)
+            return;
+
+        for (String line : text.split("\n")) {
+            line = line.trim();
+            if (line.startsWith("original=")) {
+                originalValue = line.substring("original=".length()).trim();
+            } else if (line.startsWith("applied=")) {
+                try {
+                    appliedLimit = Long.parseLong(line.substring("applied=".length()).trim());
+                } catch (NumberFormatException ignored) {
+                    appliedLimit = -1L;
+                }
+            }
+        }
+        if (originalValue != null && originalValue.isEmpty())
+            originalValue = "max";
+    }
+
+    private static void saveState() {
+        if (originalValue == null || appliedLimit < 0L) {
+            clearState();
+            return;
+        }
+
+        File file = new File(STATE_FILE);
+        try {
+            File parent = file.getParentFile();
+            if (parent != null && !parent.exists())
+                parent.mkdirs();
+            try (FileOutputStream outputStream = new FileOutputStream(file)) {
+                String content = "original=" + originalValue + "\napplied=" + appliedLimit + "\n";
+                outputStream.write(content.getBytes(StandardCharsets.UTF_8));
+                outputStream.flush();
+            }
+        } catch (IOException e) {
+            Log.w("保存前台压制原值失败: " + e);
+        }
+    }
+
+    private static void clearState() {
+        originalValue = null;
+        appliedLimit = -1L;
+        try {
+            File file = new File(STATE_FILE);
+            if (file.exists() && !file.delete())
+                Log.w("删除前台压制状态文件失败: " + STATE_FILE);
+        } catch (Throwable ignored) {
+            // 删除失败不影响功能, 下次启动会用当前值重新建立状态.
+        }
+    }
+
     private static boolean writeValue(File file, String value) {
         try (FileOutputStream outputStream = new FileOutputStream(file)) {
             outputStream.write((value + "\n").getBytes(StandardCharsets.UTF_8));
@@ -159,8 +273,6 @@ public class ForegroundGuard {
             return false;
         }
     }
-
-    private static volatile String lastWriteError;
 
     private static void logWriteFailed(String reason) {
         if (writeFailedLogged)

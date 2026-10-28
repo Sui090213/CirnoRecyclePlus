@@ -4,6 +4,8 @@
 #
 # 用法: bash scripts/package-module.sh [apk路径]
 # 输出: dist/Cirno-Recycle-Plus-<version>.zip + dist/CHECKSUMS.txt
+#
+# 依赖: zip / unzip / sha256sum 或 shasum / apksigner (可选, 用于签名校验)
 # =============================================================================
 
 set -euo pipefail
@@ -30,6 +32,37 @@ if [ -z "$APK" ] || [ ! -f "$APK" ]; then
     exit 1
 fi
 
+# 未签名的 APK 在设备上 pm install 必然失败, 提前拦截.
+case "$APK" in
+*unsigned.apk)
+    echo "拒绝打包未签名 APK: $APK" >&2
+    echo "请配置 signing/cirno-release.jks 后执行 assembleRelease" >&2
+    exit 1
+    ;;
+esac
+
+APKSIGNER="${APKSIGNER:-}"
+if [ -z "$APKSIGNER" ] && [ -n "${ANDROID_HOME:-}" ] && [ -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]; then
+    APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+fi
+if [ -z "$APKSIGNER" ] && command -v apksigner >/dev/null 2>&1; then
+    APKSIGNER="$(command -v apksigner)"
+fi
+if [ -n "$APKSIGNER" ] && [ -x "$APKSIGNER" ]; then
+    if ! "$APKSIGNER" verify "$APK" >/dev/null 2>&1; then
+        echo "APK 签名校验失败, 拒绝打包: $APK" >&2
+        exit 1
+    fi
+    echo "APK 签名校验通过"
+else
+    echo "警告: 没找到 apksigner, 跳过签名校验" >&2
+fi
+
+command -v zip >/dev/null 2>&1 || {
+    echo "需要 zip 命令 (Debian/Ubuntu: apt install zip; macOS 自带)" >&2
+    exit 1
+}
+
 VERSION="$(grep -E '^\s*version\s*=' "$MODULE_DIR/module.prop" | head -n1 | cut -d= -f2 | tr -d ' \r' | sed 's/^[vV]//')"
 [ -n "$VERSION" ] || VERSION="1.0.0"
 
@@ -44,9 +77,13 @@ cp -a "$MODULE_DIR/." "$STAGE/"
 mkdir -p "$STAGE/apk"
 cp -f "$APK" "$STAGE/apk/CirnoRecyclePlus.apk"
 
-# 统一换行符为 LF
+# 统一换行符为 LF (macOS 的 sed 不支持 sed -i, 这里用「临时文件 + mv」的可移植写法)
 find "$STAGE" -type f \( -name '*.sh' -o -name '*.prop' -o -name '*.md' -o -name '*.rule' -o -name 'update-binary' -o -name 'updater-script' \) -print0 |
-    xargs -0 -r sed -i 's/\r$//'
+    while IFS= read -r -d '' file; do
+        if grep -q $'\r' "$file" 2>/dev/null; then
+            sed 's/\r$//' "$file" >"$file.tmp" && mv -f "$file.tmp" "$file"
+        fi
+    done
 
 # 打包: 在暂存目录内执行, 保证 zip 根目录就是模块文件
 rm -f "$ZIP_PATH"
@@ -65,7 +102,12 @@ for required in module.prop customize.sh service.sh post-fs-data.sh action.sh un
     fi
 done
 
-HASH="$(sha256sum "$ZIP_PATH" | cut -d' ' -f1)"
+if command -v sha256sum >/dev/null 2>&1; then
+    HASH="$(sha256sum "$ZIP_PATH" | cut -d' ' -f1)"
+else
+    # macOS 自带 shasum
+    HASH="$(shasum -a 256 "$ZIP_PATH" | cut -d' ' -f1)"
+fi
 echo "$HASH  $ZIP_NAME" >"$OUTPUT_DIR/CHECKSUMS.txt"
 
 echo "============================================="

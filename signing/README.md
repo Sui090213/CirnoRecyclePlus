@@ -18,7 +18,11 @@
 `app/build.gradle.kts` 里会检测 `signing/cirno-release.jks` 是否存在：
 
 - 存在 → Release APK 自动用该密钥签名；
-- 不存在 → 构建 unsigned APK（此时刷入的模块 ZIP 里会退回到 Debug 签名，见构建脚本说明）。
+- 不存在 → 构建 unsigned APK。
+
+注意：`scripts/package-module.ps1` / `package-module.sh` **会拒绝把 unsigned APK 打进模块 zip**
+（未签名 APK 在设备上 `pm install` 必然失败，刷完模块会发现没有 App）。所以正式打包时请确保
+密钥文件存在，或者自己用 `-Apk` 指定一个已签名的 APK。
 
 ## 安全提示
 

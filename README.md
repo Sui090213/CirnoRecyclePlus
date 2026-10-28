@@ -33,7 +33,7 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 | 3 | **只回收已冻结应用** | 默认只动冻结了的进程，没冻结的（可能马上切回前台）不碰 | ✅ |
 | 4 | **swap / zram 换出** | 向 `memory.reclaim` 写 `N swap`，把匿名页换到 zram；没 swap 自动回退普通回收 | ✅ |
 | 5 | **L2 `compactApp`** | 复用系统 `CachedAppOptimizer` 做进程内存压缩（`MADV_COLD` / `MADV_PAGEOUT`） | ✅ |
-| 6 | **前台内存压制（实验性）** | 给 top-app cgroup 写 `memory.high` 软上限，前台应用内存失控时先限流而不是整机 OOM；记录原值、可恢复 | ✅ |
+| 6 | **前台内存压制（实验性）** | 给 top-app cgroup 写 `memory.high` 软上限，前台应用内存失控时先限流而不是整机 OOM；ROM 原值会持久化保存、关开关时恢复 | ✅ |
 | 7 | **前台冷页压缩（实验性）** | 内存有压力时对可见应用调用 `compactApp`，压制前台进程常驻内存 | ✅ |
 | 8 | **前台组回收（实验性）** | 直接回收 `foreground` cgroup（可见但没在交互的应用），不含当前 top-app | ✅ |
 | 9 | **仅息屏时回收** | 亮屏玩手机时不回收，优先保证手感 | ✅ |
@@ -54,9 +54,9 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 **步骤**
 
 1. 从 Release 页面下载 `Cirno-Recycle-Plus-v1.0.0.zip`。
-2. 在 Magisk / KernelSU / APatch 里刷入：
+2. 在 Magisk / KernelSU / APatch 里刷入（**在已开机的系统里刷**，不要用 recovery）：
    - 刷入时会**自动安装配套 APK**（`com.flyingr.cirnorecycle`），并创建配置目录 `/data/misc/CirnoRecycle`；
-   - 如果是从 recovery 刷入（此时装不了 APK），模块会在**开机后自动补装**。
+   - 如果安装时 PackageManager 还没就绪、导致 APK 安装失败，模块会在**下次开机后自动补装一次**。
 3. 重启手机。
 4. 打开 **LSPosed** → **模块** → 启用 **Cirno Recycle+**。
    - 作用域已经在 APK 里静态声明为「系统框架（system）」，不需要手动勾选。
@@ -77,21 +77,22 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 | `enableCompact` | `true` | L2 · compactApp | 是否调系统进程压缩 |
 | `frozenOnly` | `true` | 只回收已冻结应用 | 关闭后未冻结的后台应用也会被回收 |
 | `screenOffOnly` | `false` | 仅息屏时回收 | 息屏才触发 |
-| `sampleIntervalMs` | `5000` | 采样间隔 | 2–30 秒 |
-| `psiSomeThreshold` | `5.0` | 触发阈值 | PSI some/full avg10 百分比，1–30 |
-| `psiHighMultiplier` | `2.0` | （高级）高压倍数 | 达到 阈值×倍数 算高压 |
-| `psiStopThreshold` | `1.0` | （高级）提前停止阈值 | 回收中途压力降到这以下就停 |
-| `cooldownMs` | `15000` | 冷却时间 | 两次回收周期最小间隔 |
-| `maxRoundsPerCycle` | `2` | 高压连续回收轮数 | 1–4 |
-| `maxAppsPerRound` | `4` | 每轮最多回收应用数 | 1–8 |
-| `minCgroupBytes` | `32MB` | （高级）最小回收收益 | cgroup 小于该值跳过 |
-| `maxBytesPerApp` | `128MB` | （高级）单应用上限 | 单次回收上限 |
-| `reclaimRatio` | `0.10` | 单应用回收比例 | 5%–50% |
+| `sampleIntervalMs` | `5000` | 采样间隔滑条 | 2–30 秒 |
+| `psiSomeThreshold` | `5.0` | 触发阈值滑条 | PSI some/full avg10 百分比，1–30 |
+| `psiHighMultiplier` | `2.0` | 高压判定倍数滑条 | 1–6 |
+| `psiStopThreshold` | `1.0` | 提前停止阈值滑条 | 0–10，回收中途压力降到这以下就停 |
+| `cooldownMs` | `15000` | 冷却时间滑条 | 两次回收周期最小间隔 |
+| `maxRoundsPerCycle` | `2` | 高压连续回收轮数滑条 | 1–4 |
+| `maxAppsPerRound` | `4` | 每轮最多回收应用数滑条 | 1–8 |
+| `minCgroupBytes` | `32MB` | 最小回收收益滑条 | 8–256MB |
+| `maxBytesPerApp` | `128MB` | 单应用单次上限滑条 | 32–512MB |
+| `reclaimRatio` | `0.10` | 单应用回收比例滑条 | 5%–50% |
 | `foregroundGuard` | `false` | top-app memory.high 软上限 | 前台压制，实验性 |
-| `foregroundHighRatio` | `0.80` | 软上限占物理内存 | 50%–95% |
-| `foregroundColdCompact` | `false` | 前台冷页压缩 | 对可见应用做 compact，实验性 |
+| `foregroundHighRatio` | `0.80` | 软上限占物理内存滑条 | 50%–95% |
+| `foregroundColdCompact` | `false` | 前台冷页压缩 | 对可见应用做 compact，实验性（需要 L2 开启） |
+| `foregroundColdIntervalMs` | `30000` | 前台冷页压缩间隔滑条 | 10–120 秒 |
 | `foregroundReclaim` | `false` | 前台组直接回收 | 回收 foreground cgroup，实验性 |
-| `requestSeq` | `0` | 立即回收一次 | App 里点按钮写时间戳，system_server 收到后强制跑一轮 |
+| `requestSeq` | `0` | 立即回收一次按钮 | App 里点按钮写时间戳，system_server 收到后强制跑一轮 |
 
 **建议**：先保持默认（只回收冻结应用 + L0/L2），在 App 里看几天日志；确认稳定后再动阈值，或者开 `dryRun` 看候选是否符合预期。前台那几项是实验性的，卡顿就关掉。
 
@@ -111,9 +112,11 @@ adb shell 'tail -f /data/misc/CirnoRecycle/log/current.log'
 内存回收模块已启动, cgroup v2 = true, memory.reclaim = true, PSI = true, top-app memory.high = false
 内存压力变化: PSI(memory) some avg10=12.30% full avg10=3.75% -> 中等
 内存回收 com.example.app: 210.4MB -> 154.8MB (请求 21.0MB, 实际 55.6MB)
-内存压缩 com.example.app: 2 个进程
 内存回收完成: 压力=中等, 应用数=2, 共回收 72.1MB, 压缩进程数=3
+前台冷页压缩 com.example.app: 2 个进程 (压力=中等)
 ```
+
+（`内存回收完成` 只在本轮真的有动作时才打印；前台冷页压缩需要手动打开对应开关。）
 
 ## 工作原理（简版）
 
@@ -139,7 +142,7 @@ Memory HandlerThread（后台优先级）每 sampleIntervalMs 跑一次
 
 ## 自己构建
 
-需要 **JDK 25 + Android SDK 36**（和上游 Cirno 一致）。
+本仓库构建需要 **JDK 25 + Android SDK 36**（compileSdk/targetSdk 36，Java source/target 25）。
 
 ```bash
 # 只构建 APK
@@ -148,7 +151,7 @@ Memory HandlerThread（后台优先级）每 sampleIntervalMs 跑一次
 # 一键构建 APK + 跑单元测试 + 打包模块 zip（Windows）
 powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
 
-# 一键构建（Linux / macOS / CI）
+# 一键构建（Linux / CI；macOS 需要 GNU sed/sha256sum，例如 brew install coreutils）
 bash scripts/package-module.sh
 ```
 
@@ -191,11 +194,14 @@ A：不会。本项目只回收内存页 / 压缩进程，不杀进程、不发 
 **Q：和原版 Cirno 冲突吗？**
 A：包名不同（`com.flyingr.cirnorecycle`），可以共存；但两个冻结器同时开会互相抢 cgroup 状态，**建议只留一个**。
 
-**Q：刷入时提示 APK 安装失败？**
-A：如果是在 recovery 里刷的，属于正常，开机后 `service.sh` 会自动补装；如果开机后仍未安装，手动安装模块目录里的 `apk/CirnoRecyclePlus.apk` 即可。
+**Q：刷入时提示 APK 安装失败 / 重启后手机上找不到 App？**
+A：先看 `/data/adb/modules/cirno_recycle_plus/install.log`。如果模块目录里还有 `apk/CirnoRecyclePlus.apk`，可以直接用 root 文件管理器手动安装；如果安装成功后 `apk/` 已被清理，**重新刷一次模块 zip** 即可重新安装。
+
+**Q：刷入模块时提示「没有检测到 LSPosed」？**
+A：这只是提示。LSPosed 必须在刷入前就装好（Zygisk 版 + 已启用），否则模块代码不会加载。装好 LSPosed 后重新刷入模块并重启即可。
 
 **Q：能卸载吗？**
-A：在 root 管理器里删除模块并重启即可，配套 App 会被自动卸载（配置目录保留，彻底清理请手动 `rm -rf /data/misc/CirnoRecycle`）。
+A：在 root 管理器里删除模块并重启即可。支持 `/data/adb/service.d` 的 root 方案（Magisk、较新的 KernelSU/APatch）会通过清理脚本自动卸载配套 App；如果你的环境没有执行该脚本，重启后 App 可能仍在，手动卸载 `com.flyingr.cirnorecycle` 即可。配置目录默认保留，彻底清理请手动 `rm -rf /data/misc/CirnoRecycle`。
 
 ## 二改声明 & 版权
 

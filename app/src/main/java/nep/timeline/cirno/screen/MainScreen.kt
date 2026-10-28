@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
@@ -92,8 +93,10 @@ fun MainScreen() {
         readConfig.value = withContext(Dispatchers.IO) {
             runCatching { ConfigManager.manager.readConfigSU() }.getOrDefault(false)
         }
+        // 应用列表和图标加载也放到 IO 线程, 避免主线程批量 loadIcon 造成首开卡顿.
+        val loaded = withContext(Dispatchers.IO) { getInstalledApps(context) }
         handler.post {
-            apps.value = getInstalledApps(context)
+            apps.value = loaded
         }
     }
 
@@ -111,9 +114,12 @@ fun MainScreen() {
 
     @Composable
     fun AppItem(appInfo: ApplicationInfo, packageManager: PackageManager) {
-        val appName = appInfo.loadLabel(packageManager).toString()
-        val appIcon = appInfo.loadIcon(packageManager)
+        val appName = remember(appInfo) { appInfo.loadLabel(packageManager).toString() }
+        val appIcon = remember(appInfo) {
+            appInfo.loadIcon(packageManager).toBitmap().asImageBitmap()
+        }
         val userId = PKGUtils.getUserId(appInfo.uid)
+        val white = remember(appInfo) { AppConfigs.isWhiteApp(appInfo.packageName, userId) }
 
         Row(
             modifier = if (Shell.getShell().isRoot && readConfig.value)
@@ -126,7 +132,7 @@ fun MainScreen() {
                     .padding(8.dp)
         ) {
             Image(
-                bitmap = appIcon.toBitmap().asImageBitmap(),
+                bitmap = appIcon,
                 contentDescription = null,
                 modifier = Modifier.size(48.dp)
             )
@@ -135,9 +141,9 @@ fun MainScreen() {
                 modifier = Modifier.weight(1f)
             ) {
                 Text(
-                    text = (if (AppConfigs.isWhiteApp(appInfo.packageName, userId)) "(白名单) " else "") + appName,
+                    text = (if (white) "(白名单) " else "") + appName,
                     style = MaterialTheme.typography.titleMedium,
-                    color = (if (AppConfigs.isWhiteApp(appInfo.packageName, userId)) Color(0xFF4CAF50) else Color.Unspecified)
+                    color = (if (white) Color(0xFF4CAF50) else Color.Unspecified)
                 )
                 Text(
                     text = (if (userId == 0) "" else "$userId#") + appInfo.packageName,
@@ -184,17 +190,19 @@ fun MainScreen() {
                                 overflow = TextOverflow.Ellipsis
                             )
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                // 只有真的拿到 root 并成功读到配置才显示「已激活」;
+                                // 没有 root / 配置读失败时显示灰色「未激活」, 别再误导用户.
                                 Box(
                                     modifier = Modifier
                                         .size(10.dp)
                                         .background(
-                                            color = Color(0xFF4CAF50),// else Color.Gray,
+                                            color = if (readConfig.value) Color(0xFF4CAF50) else Color.Gray,
                                             shape = CircleShape
                                         )
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "已激活",// else "未激活",
+                                    text = if (readConfig.value) "已激活" else "未激活(需要 root)",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -234,8 +242,10 @@ fun MainScreen() {
             color = MaterialTheme.colorScheme.background
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                val sortedApps = apps.value.sortedByDescending {
-                    AppConfigs.isWhiteApp(it.packageName, PKGUtils.getUserId(it.uid))
+                val sortedApps = remember(apps.value) {
+                    apps.value.sortedByDescending {
+                        AppConfigs.isWhiteApp(it.packageName, PKGUtils.getUserId(it.uid))
+                    }
                 }
                 LazyColumn(
                     modifier = Modifier
@@ -244,10 +254,13 @@ fun MainScreen() {
                     //state = listState,
                     contentPadding = PaddingValues(top = padding.calculateTopPadding())
                 ) {
-                    item {
-                        for (appInfo in sortedApps) {
-                            AppItem(appInfo, packageManager)
-                        }
+                    // 用 items() 而不是把所有应用塞进一个 item: LazyColumn 只组合可见项,
+                    // 应用多时不会一次性加载全部图标.
+                    items(
+                        items = sortedApps,
+                        key = { appInfo -> appInfo.packageName + "#" + PKGUtils.getUserId(appInfo.uid) }
+                    ) { appInfo ->
+                        AppItem(appInfo, packageManager)
                     }
                 }
             }

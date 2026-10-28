@@ -10,11 +10,13 @@ import lombok.Getter;
 @Getter
 public class AppState {
     private final AppRecord parent;
-    private boolean visible = false;
-    private boolean location = false;
-    private boolean audio = false;
-    private boolean recording = false;
-    private boolean vpn = false;
+    // 这些状态由各 Hook 线程写、Memory 线程读: volatile 保证读到的不是过期值,
+    // 避免把「刚解冻、马上回前台」的应用当成冻结应用回收.
+    private volatile boolean visible = false;
+    private volatile boolean location = false;
+    private volatile boolean audio = false;
+    private volatile boolean recording = false;
+    private volatile boolean vpn = false;
     private final Set<IBinder> activities = new HashSet<>();
     private final Set<IBinder> locationListeners = new HashSet<>();
     private final Set<Integer> interfaceIds = new HashSet<>();

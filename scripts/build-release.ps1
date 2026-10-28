@@ -81,6 +81,13 @@ Write-Host '=== 构建 Release APK ==='
 & $gradlew assembleRelease --no-daemon
 if ($LASTEXITCODE -ne 0) { throw "Release 构建失败 (exit $LASTEXITCODE)" }
 
+# 必须产出已签名的 APK, 否则模块里的 App 装不上.
+$signedApk = Join-Path $repoRoot 'app\build\outputs\apk\release\app-release.apk'
+if (-not (Test-Path $signedApk)) {
+    throw "没有生成已签名的 app-release.apk。请确认 signing/cirno-release.jks 存在 (见 signing/README.md)。"
+}
+Write-Host "Release APK: $signedApk"
+
 Write-Host ''
 Write-Host '=== 打包模块 zip ==='
 & (Join-Path $PSScriptRoot 'package-module.ps1')

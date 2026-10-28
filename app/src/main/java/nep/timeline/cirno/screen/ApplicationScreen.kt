@@ -120,10 +120,11 @@ fun ApplicationScreen(activity: ApplicationActivity) {
                                     else
                                         settings.whiteApps.remove(key)
                                     isWhitelisted.value = checked
-                                    // 写配置文件要 root, 放到后台线程, 避免卡 UI.
-                                    Thread {
+                                    // 写配置文件要 root, 统一排进进程级单线程写队列,
+                                    // 避免和内存设置页并发写同一对 JSON 互相覆盖.
+                                    nep.timeline.cirno.configs.ConfigWriter.submit {
                                         runCatching { ConfigManager.manager.saveConfigSU() }
-                                    }.start()
+                                    }
                                 }
                             )
                         }

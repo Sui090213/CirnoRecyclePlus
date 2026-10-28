@@ -50,7 +50,7 @@ if ! pm list packages 2>/dev/null | grep -q "package:$PKG"; then
             log "APK 安装仍然失败, 请手动安装模块目录里的 apk/CirnoRecyclePlus.apk"
         fi
     else
-        log "APK 未安装且模块目录里没有 apk 文件"
+        log "配套 APK 未安装, 且模块目录里没有 apk 文件; 请重新刷入模块 zip, 或从 zip 里取出 apk/CirnoRecyclePlus.apk 手动安装"
     fi
 else
     rm -f "$MODDIR/.apk_pending"

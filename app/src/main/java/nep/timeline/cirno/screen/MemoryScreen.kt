@@ -44,6 +44,7 @@ import kotlinx.coroutines.withContext
 import nep.timeline.cirno.GlobalVars
 import nep.timeline.cirno.MemoryActivity
 import nep.timeline.cirno.configs.ConfigManager
+import nep.timeline.cirno.configs.ConfigWriter
 import nep.timeline.cirno.configs.settings.GlobalSettings
 import nep.timeline.cirno.memory.MemorySettings
 import java.util.Locale
@@ -147,6 +148,9 @@ fun MemoryScreen(activity: MemoryActivity) {
     var psiText by remember { mutableStateOf("读取中…") }
     var logLines by remember { mutableStateOf(listOf<String>()) }
 
+    // 配置损坏(文件存在但解析失败)时先锁住写入, 避免一次误触把默认值整份覆盖上去.
+    var writesLocked by remember { mutableStateOf(false) }
+
     fun refreshPressure() {
         scope.launch(Dispatchers.IO) {
             val text = runCatching {
@@ -180,6 +184,7 @@ fun MemoryScreen(activity: MemoryActivity) {
         }
         rootOk = ok
         if (ok) {
+            writesLocked = GlobalVars.configCorrupted
             config = withContext(Dispatchers.IO) { loadUiConfig() }
         } else {
             errorText = "没有 root 权限, 无法读取或写入配置.\n请在 Magisk / KernelSU / APatch 里给本应用授权."
@@ -190,7 +195,9 @@ fun MemoryScreen(activity: MemoryActivity) {
 
     /** 普通开关的持久化: 不包含 requestSeq. */
     fun persist(new: MemoryUiConfig) {
-        scope.launch(Dispatchers.IO) {
+        if (writesLocked)
+            return
+        ConfigWriter.submit {
             runCatching {
                 synchronized(WRITE_LOCK) {
                     val global = GlobalVars.globalSettings
@@ -215,12 +222,14 @@ fun MemoryScreen(activity: MemoryActivity) {
 
     /** 「立即回收一次」: 只写 requestSeq, 由 system_server 检测到变化后强制跑一轮. */
     fun requestReclaimOnce() {
+        if (writesLocked)
+            return
         val old = config ?: return
         val seq = System.currentTimeMillis()
         if (seq <= old.requestSeq)
             return
         config = old.copy(requestSeq = seq)
-        scope.launch(Dispatchers.IO) {
+        ConfigWriter.submit {
             runCatching {
                 synchronized(WRITE_LOCK) {
                     val global = GlobalVars.globalSettings
@@ -284,6 +293,28 @@ fun MemoryScreen(activity: MemoryActivity) {
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall
                         )
+                    }
+                }
+
+                if (writesLocked) {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "配置文件解析失败",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                text = "当前显示的是默认值或上一次的旧配置。为避免把可能还能手动修复的配置直接覆盖，写入已暂时锁定。确认要用当前界面上的值覆盖后，再点下面的按钮解锁。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            TextButton(onClick = {
+                                writesLocked = false
+                                errorText = null
+                            }) {
+                                Text("仍要写入（覆盖损坏的配置）")
+                            }
+                        }
                     }
                 }
 
@@ -393,6 +424,42 @@ fun MemoryScreen(activity: MemoryActivity) {
                         steps = 2,
                         onChangeFinished = { value -> update { it.copy(maxRoundsPerCycle = value.toInt()) } }
                     )
+                    SliderRow(
+                        title = "高压判定倍数",
+                        valueText = String.format(Locale.US, "%.1fx", current.psiHighMultiplier),
+                        value = current.psiHighMultiplier.toFloat(),
+                        range = 1f..6f,
+                        steps = 9,
+                        onChangeFinished = { value -> update { it.copy(psiHighMultiplier = value.toDouble()) } }
+                    )
+                    SliderRow(
+                        title = "提前停止阈值",
+                        valueText = String.format(Locale.US, "%.1f%%", current.psiStopThreshold),
+                        value = current.psiStopThreshold.toFloat(),
+                        range = 0f..10f,
+                        steps = 9,
+                        onChangeFinished = { value -> update { it.copy(psiStopThreshold = value.toDouble()) } }
+                    )
+                    SliderRow(
+                        title = "最小回收收益",
+                        valueText = "${current.minCgroupBytes / (1024 * 1024)} MB",
+                        value = (current.minCgroupBytes / (1024 * 1024)).toFloat(),
+                        range = 8f..256f,
+                        steps = 30,
+                        onChangeFinished = { value ->
+                            update { it.copy(minCgroupBytes = value.toLong() * 1024 * 1024) }
+                        }
+                    )
+                    SliderRow(
+                        title = "单应用单次回收上限",
+                        valueText = "${current.maxBytesPerApp / (1024 * 1024)} MB",
+                        value = (current.maxBytesPerApp / (1024 * 1024)).toFloat(),
+                        range = 32f..512f,
+                        steps = 29,
+                        onChangeFinished = { value ->
+                            update { it.copy(maxBytesPerApp = value.toLong() * 1024 * 1024) }
+                        }
+                    )
                 }
 
                 SectionCard("前台内存压制 (实验性)") {
@@ -412,9 +479,19 @@ fun MemoryScreen(activity: MemoryActivity) {
                     )
                     SwitchRow(
                         title = "前台冷页压缩",
-                        subtitle = "内存有压力时对可见应用调用 compactApp, 把冷页标记为可回收",
+                        subtitle = "内存有压力时对可见应用调用 compactApp, 把冷页标记为可回收 (需要 L2 总开关开启)",
                         checked = current.foregroundColdCompact,
                         onCheckedChange = { value -> update { it.copy(foregroundColdCompact = value) } }
+                    )
+                    SliderRow(
+                        title = "前台冷页压缩间隔",
+                        valueText = "${current.foregroundColdIntervalMs / 1000} 秒",
+                        value = current.foregroundColdIntervalMs / 1000f,
+                        range = 10f..120f,
+                        steps = 21,
+                        onChangeFinished = { value ->
+                            update { it.copy(foregroundColdIntervalMs = (value * 1000).toInt()) }
+                        }
                     )
                     SwitchRow(
                         title = "前台组直接回收 (foreground cgroup)",

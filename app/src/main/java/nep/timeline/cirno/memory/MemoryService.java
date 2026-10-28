@@ -27,7 +27,7 @@ import nep.timeline.cirno.virtuals.ProcessRecord;
  *         (非系统 / 非前台可见 / 非音频 / 非录音 / 非定位 / 非 VPN, 默认只挑已冻结应用);</li>
  *     <li>按 cgroup memory.current 从大到小, 对每个应用先写 memory.reclaim 回收页,
  *         再调用 CachedAppOptimizer.compactApp 请求进程压缩;</li>
- *     <li>每回收一个应用就重新看一次 PSI, 压力降下来就提前结束, 避免过度回收;</li>
+ *     <li>每一轮开始前重新采样 PSI, 压力降下来就提前结束, 避免过度回收;</li>
  *     <li>有冷却时间, 避免持续高压下反复回收; 高压时可以在一轮里连续回收多遍.</li>
  * </ol>
  *
@@ -166,7 +166,7 @@ public class MemoryService {
             lastCycleElapsed = now;
         }
 
-        if (settings.foregroundColdCompact)
+        if (settings.foregroundColdCompact && settings.enableCompact)
             compactForegroundIfNeeded(settings, forced ? LEVEL_MODERATE : level);
 
         reclaimCycle(settings, forced ? LEVEL_MODERATE : level, forced);
@@ -305,8 +305,11 @@ public class MemoryService {
             totalReclaimed += roundReclaimed;
             totalCompacted += roundCompacted;
 
-            Log.i("内存回收完成: 压力=" + levelName(level) + ", 应用数=" + acted
-                    + ", 共回收 " + formatBytes(roundReclaimed) + ", 压缩进程数=" + roundCompacted);
+            // 没有任何实际动作时不刷日志, 避免持续低压/空转时把 current.log 写满.
+            if (acted > 0 || roundReclaimed > 0L || roundCompacted > 0) {
+                Log.i("内存回收完成: 压力=" + levelName(level) + ", 应用数=" + acted
+                        + ", 共回收 " + formatBytes(roundReclaimed) + ", 压缩进程数=" + roundCompacted);
+            }
 
             // dryRun / 没有候选 / 本遍没东西可做时不再重复.
             if (settings.dryRun || dryRunLogged || acted == 0 || acted < settings.maxAppsPerRound)
