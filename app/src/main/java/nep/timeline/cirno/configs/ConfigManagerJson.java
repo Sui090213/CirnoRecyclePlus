@@ -155,7 +155,12 @@ public class ConfigManagerJson {
         return filesPresent;
     }
 
-    public void saveConfigSU() {
+    /**
+     * App 进程侧保存配置 (root shell, 临时文件 + 原子替换).
+     *
+     * @return true 表示两个文件都写入并读回校验成功; false 表示写入失败 (调用方必须提示用户).
+     */
+    public boolean saveConfigSU() {
         try {
             GlobalSettings globalSettings = GlobalVars.globalSettings;
             if (globalSettings != null) {
@@ -167,10 +172,12 @@ public class ConfigManagerJson {
                 String applicationConfigStr = gson.toJson(GlobalVars.applicationSettings);
                 RWUtils.writeStringToFileSUAtomic(new SuFile(GlobalVars.CONFIG_DIR, applicationSettingsName), applicationConfigStr);
             }
-            // 写入成功后配置就是完整可读的了, 清掉「损坏」标记.
+            // 写入并读回校验成功后才清掉「损坏」标记.
             GlobalVars.configCorrupted = false;
+            return true;
         } catch (IOException e) {
             Log.e("Save Config", e);
+            return false;
         }
     }
 }

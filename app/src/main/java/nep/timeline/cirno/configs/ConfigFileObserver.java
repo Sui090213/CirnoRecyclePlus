@@ -20,6 +20,13 @@ public class ConfigFileObserver extends FileObserver {
 
     @Override
     public void onEvent(int event, String path) {
+        // 只关心两个配置文件; 同目录下的 foreground_guard.orig / *.tmp 等事件直接忽略,
+        // 否则每次保存前台压制原值都会触发一次多余的配置重载.
+        if (path != null
+                && !path.equals("GlobalSettings.json")
+                && !path.equals("ApplicationSettings.json"))
+            return;
+
         Handler handler = Handlers.config;
         handler.removeCallbacksAndMessages(null);
         switch (event & ALL_EVENTS) {

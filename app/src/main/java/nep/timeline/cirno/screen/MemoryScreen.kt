@@ -205,7 +205,9 @@ fun MemoryScreen(activity: MemoryActivity) {
                     val memory = global.memory ?: MemorySettings().also { global.memory = it }
                     new.applyTo(memory)
                     memory.sanitize()
-                    ConfigManager.manager.saveConfigSU()
+                    if (!ConfigManager.manager.saveConfigSU()) {
+                        throw IllegalStateException("配置文件写入失败 (可能是 root 权限或磁盘问题)")
+                    }
                 }
             }.onFailure {
                 errorText = "写入配置失败: ${it.message}"
@@ -236,7 +238,9 @@ fun MemoryScreen(activity: MemoryActivity) {
                         ?: GlobalSettings().also { GlobalVars.globalSettings = it }
                     val memory = global.memory ?: MemorySettings().also { global.memory = it }
                     memory.requestSeq = seq
-                    ConfigManager.manager.saveConfigSU()
+                    if (!ConfigManager.manager.saveConfigSU()) {
+                        throw IllegalStateException("配置文件写入失败 (可能是 root 权限或磁盘问题)")
+                    }
                 }
             }.onFailure {
                 errorText = "写入回收请求失败: ${it.message}"
@@ -458,10 +462,15 @@ fun MemoryScreen(activity: MemoryActivity) {
                     SliderRow(
                         title = "提前停止阈值",
                         valueText = String.format(Locale.US, "%.1f%%", current.psiStopThreshold),
-                        value = current.psiStopThreshold.toFloat(),
-                        range = 0f..10f,
+                        value = current.psiStopThreshold.coerceIn(0.0, current.psiSomeThreshold).toFloat(),
+                        range = 0f..current.psiSomeThreshold.toFloat().coerceAtLeast(1f),
                         steps = 9,
-                        onChangeFinished = { value -> update { it.copy(psiStopThreshold = value.toDouble()) } }
+                        onChangeFinished = { value ->
+                            // 提前停止阈值不能高于触发阈值, 否则 sanitize 会静默把它改小.
+                            update {
+                                it.copy(psiStopThreshold = minOf(value.toDouble(), it.psiSomeThreshold))
+                            }
+                        }
                     )
                     SliderRow(
                         title = "最小回收收益",

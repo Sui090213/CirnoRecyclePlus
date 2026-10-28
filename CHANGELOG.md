@@ -45,7 +45,7 @@
 - **配置损坏保护**：配置文件存在但解析失败时，system_server 侧保留旧配置；App 侧检测到损坏会锁定写入并要求用户确认，避免默认值整份覆盖。
 - **主界面**：应用列表枚举在 IO 线程完成，`LazyColumn items()` 按需组合可见项、图标 `remember` 缓存；「已激活」改为三态（已激活 / 等待模块加载 / 未激活需要 root）。
 - `ConfigManager.readConfig()` 每次读完都写回配置，配合 `ConfigFileObserver` 会形成「写 → 事件 → 读 → 再写」的 2 秒死循环；改为只读。
-- `Log.fileLog` 写文件失败时递归调用 `Log.e`，在 App 进程没有 root 权限时会无限 post；改为只写 logcat，连续失败 3 次后关闭文件日志。`current.log` 超过 2MB 时轮转为 `last.log`。
+- `Log.fileLog` 写文件失败时递归调用 `Log.e`，在 App 进程没有 root 权限时会无限 post；改为只写 logcat，连续失败 3 次后暂停文件日志 60 秒再重试。`current.log` 超过 2MB 时轮转为 `last.log`。
 - 内存回收日志：空转 / 没有实际动作时不再打印「内存回收完成」，避免持续写日志。
 - `AppRecord.frozen`、`AppState` 的可见/音频/录音/定位/VPN 状态加 `volatile`，避免内存线程读到过期状态、误回收刚解冻的应用。
 - `ApplicationSettings.whiteApps` 默认用 `Set.of(...)`（不可变），首次运行时加白名单会抛 `UnsupportedOperationException`；改为 `LinkedHashSet`。

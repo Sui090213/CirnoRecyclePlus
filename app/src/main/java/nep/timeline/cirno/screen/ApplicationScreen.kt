@@ -111,22 +111,41 @@ fun ApplicationScreen(activity: ApplicationActivity) {
                             Switch(
                                 checked = isWhitelisted.value,
                                 onCheckedChange = { checked ->
-                                    val key = "$packageName#$userId"
-                                    val settings = GlobalVars.applicationSettings
-                                        ?: nep.timeline.cirno.configs.settings.ApplicationSettings()
-                                            .also { GlobalVars.applicationSettings = it }
-                                    // JSON 里 "whiteApps": null 时兜底成可变集合, 避免 NPE.
-                                    if (settings.whiteApps == null)
-                                        settings.whiteApps = java.util.LinkedHashSet()
-                                    if (checked)
-                                        settings.whiteApps.add(key)
-                                    else
-                                        settings.whiteApps.remove(key)
-                                    isWhitelisted.value = checked
-                                    // 写配置文件要 root, 统一排进进程级单线程写队列,
-                                    // 避免和内存设置页并发写同一对 JSON 互相覆盖.
-                                    nep.timeline.cirno.configs.ConfigWriter.submit {
-                                        runCatching { ConfigManager.manager.saveConfigSU() }
+                                    if (GlobalVars.configCorrupted) {
+                                        android.widget.Toast.makeText(
+                                            activity,
+                                            "配置文件损坏，写入已锁定；请先到内存设置页确认覆盖",
+                                            android.widget.Toast.LENGTH_LONG
+                                        ).show()
+                                    } else {
+                                        val key = "$packageName#$userId"
+                                        val settings = GlobalVars.applicationSettings
+                                            ?: nep.timeline.cirno.configs.settings.ApplicationSettings()
+                                                .also { GlobalVars.applicationSettings = it }
+                                        // JSON 里 "whiteApps": null 时兜底成可变集合, 避免 NPE.
+                                        if (settings.whiteApps == null)
+                                            settings.whiteApps = java.util.LinkedHashSet()
+                                        if (checked)
+                                            settings.whiteApps.add(key)
+                                        else
+                                            settings.whiteApps.remove(key)
+                                        isWhitelisted.value = checked
+                                        // 写配置文件要 root, 统一排进进程级单线程写队列,
+                                        // 避免和内存设置页并发写同一对 JSON 互相覆盖.
+                                        nep.timeline.cirno.configs.ConfigWriter.submit {
+                                            val ok = runCatching {
+                                                ConfigManager.manager.saveConfigSU()
+                                            }.getOrDefault(false)
+                                            if (!ok) {
+                                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                                    android.widget.Toast.makeText(
+                                                        activity,
+                                                        "白名单保存失败：请检查 root 权限或查看日志",
+                                                        android.widget.Toast.LENGTH_LONG
+                                                    ).show()
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             )

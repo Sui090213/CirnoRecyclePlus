@@ -24,7 +24,8 @@ public class AppRecord {
      */
     private volatile AppState appState;
     /** 冻结状态会被 Freezer / Binder 线程写、被 Memory 线程读, 必须 volatile. */
-    private volatile boolean frozen;    private final List<ProcessRecord> processRecords = new CopyOnWriteArrayList<>();
+    private volatile boolean frozen;
+    private final List<ProcessRecord> processRecords = new CopyOnWriteArrayList<>();
 
     public AppRecord(ApplicationInfo applicationInfo) {
         this.packageName = applicationInfo.packageName;

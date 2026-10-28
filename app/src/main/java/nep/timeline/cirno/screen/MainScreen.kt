@@ -130,7 +130,8 @@ fun MainScreen() {
         val white = remember(appInfo) { AppConfigs.isWhiteApp(appInfo.packageName, userId) }
 
         Row(
-            modifier = if (rootOk.value)
+            // 配置损坏时禁止进应用页: 否则白名单开关会用默认值整份覆盖配置, 绕过设置页的写锁.
+            modifier = if (rootOk.value && (configOk.value || !GlobalVars.configCorrupted))
                 Modifier
                     .fillMaxWidth()
                     .padding(8.dp).clickable(onClick = { enterAppPage(appName, userId.toString(), appInfo.packageName) })

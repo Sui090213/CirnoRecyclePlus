@@ -51,7 +51,12 @@ if ($Apk -match 'unsigned\.apk$') {
 $apksigner = $null
 if ($env:ANDROID_HOME) {
     $buildToolsRoot = Join-Path $env:ANDROID_HOME 'build-tools'
-    if (Test-Path $buildToolsRoot) {
+    # 优先用固定版本 (和项目文档一致), 找不到再回退到版本号最高的 build-tools.
+    $preferred = Join-Path $buildToolsRoot '36.0.0\apksigner.bat'
+    if (Test-Path $preferred) {
+        $apksigner = $preferred
+    }
+    elseif (Test-Path $buildToolsRoot) {
         $buildToolsDirs = Get-ChildItem $buildToolsRoot -Directory -ErrorAction SilentlyContinue |
             Sort-Object { try { [version]($_.Name -replace '[^0-9.]', '') } catch { [version]'0.0' } } -Descending
         foreach ($dir in $buildToolsDirs) {

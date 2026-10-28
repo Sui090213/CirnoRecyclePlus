@@ -56,6 +56,7 @@ public class ForegroundGuard {
     private static boolean stateLoaded = false;
     private static String originalValue;
     private static long appliedLimit = -1L;
+    private static long lastRestoreWarnMs = 0L;
 
     private ForegroundGuard() {
     }
@@ -159,7 +160,7 @@ public class ForegroundGuard {
         String current = readLimit(highFile);
         if (current == null) {
             // 瞬时读取失败: 保留状态文件, 下次 tick 重试.
-            Log.w("前台压制: 暂时读不到 memory.high, 保留原值记录稍后重试");
+            warnRestoreRetry("暂时读不到 memory.high");
             return;
         }
 
@@ -186,7 +187,7 @@ public class ForegroundGuard {
 
         if (!writeValue(highFile, originalValue)) {
             // 写失败: 保留状态文件, 下次 tick 继续尝试.
-            Log.w("前台压制恢复失败, 保留原值记录稍后重试: " + highFile + " = " + originalValue);
+            warnRestoreRetry("恢复写入失败 (" + highFile + " = " + originalValue + ")");
             return;
         }
 
@@ -224,6 +225,15 @@ public class ForegroundGuard {
     // ---------------------------------------------------------------------
     // 状态持久化
     // ---------------------------------------------------------------------
+
+    /** restore 失败每 5 秒都会被重试, 日志做 60 秒节流, 避免刷屏. */
+    private static void warnRestoreRetry(String reason) {
+        long now = System.currentTimeMillis();
+        if (now - lastRestoreWarnMs < 60_000L)
+            return;
+        lastRestoreWarnMs = now;
+        Log.w("前台压制恢复暂未成功, 保留原值记录稍后重试: " + reason);
+    }
 
     private static void loadState() {
         if (stateLoaded)
@@ -300,11 +310,14 @@ public class ForegroundGuard {
                 outputStream.flush();
             }
             if (!temp.renameTo(file)) {
-                // rename 失败时退化处理: 删旧文件再重命名.
-                if (file.exists())
-                    file.delete();
-                if (!temp.renameTo(file))
-                    Log.w("保存前台压制原值失败: rename 到 " + file);
+                // rename 失败时直接覆写原文件 (不要先删旧文件, 否则两次失败会丢掉原值记录).
+                try (FileOutputStream outputStream = new FileOutputStream(file)) {
+                    outputStream.write(("original=" + originalValue + "\napplied=" + appliedLimit + "\n")
+                            .getBytes(StandardCharsets.UTF_8));
+                    outputStream.flush();
+                } catch (IOException e) {
+                    Log.w("保存前台压制原值失败: " + e);
+                }
             }
         } catch (IOException e) {
             Log.w("保存前台压制原值失败: " + e);
