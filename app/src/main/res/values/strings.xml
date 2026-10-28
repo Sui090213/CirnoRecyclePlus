@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">Cirno Recycle+</string>
+    <string name="package_name" translatable="false">com.flyingr.cirnorecycle</string>
+    <string name="app_author" translatable="false">flyingr</string>
+    <string name="app_version" translatable="false">1.0.0</string>
+    <string name="app_description">Cirno Recycle+ by flyingr: Android app freezer + memory reclaimer. Freezes background apps and reclaims their memory to improve device smoothness</string>
+</resources>

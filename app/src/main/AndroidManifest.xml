@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="PackageVisibilityPolicy,QueryAllPackagesPermission" />
+
+    <application
+        android:icon="@mipmap/ic_logo_snowflake"
+        android:label="@string/app_name"
+        android:description="@string/app_description"
+        android:roundIcon="@mipmap/ic_logo_snowflake_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Cirno">
+
+        <meta-data
+            android:name="com.flyingr.author"
+            android:value="flyingr" />
+        <meta-data
+            android:name="com.flyingr.version"
+            android:value="1.0.0" />
+
+        <activity
+            android:name=".ApplicationActivity"
+            android:exported="false"/>
+        <activity
+            android:name=".MemoryActivity"
+            android:exported="false"/>
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Cirno">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
