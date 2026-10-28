@@ -1,1 +1,1 @@
-Cirno Recycle+ by flyingr: freezer + memory reclaimer for background apps
+Cirno Recycle+ by flyingr: app freezer + memory reclaimer (fork of Cirno, GPL-3.0)

@@ -1,0 +1,1 @@
+v1.0.0: memory reclaim (memory.reclaim + compactApp, PSI-triggered), experimental foreground memory suppression, settings UI with toggles, auto-install flashable module.
