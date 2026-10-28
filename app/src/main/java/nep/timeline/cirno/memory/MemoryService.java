@@ -133,24 +133,26 @@ public class MemoryService {
             ForegroundGuard.restore();
         }
 
-        if (!PsiMonitor.isSupported()) {
-            if (!psiUnsupportedLogged) {
-                psiUnsupportedLogged = true;
-                Log.w("内核未开启 PSI (/proc/pressure/memory 不存在), 内存回收已停用");
+        // 手动「立即回收一次」优先处理: 即使内核没有 PSI, 也应该能手动跑一轮回收.
+        boolean forced = handleForcedRequest(settings);
+
+        boolean psiOk = PsiMonitor.isSupported() && PsiMonitor.read(PSI_STATS);
+        if (!psiOk) {
+            if (!forced) {
+                if (!PsiMonitor.isSupported() && !psiUnsupportedLogged) {
+                    psiUnsupportedLogged = true;
+                    Log.w("内核未开启 PSI (/proc/pressure/memory 不存在), 自动回收已停用 (手动回收仍可用)");
+                }
+                return;
             }
-            return;
         }
 
-        if (!PsiMonitor.read(PSI_STATS))
-            return;
-
-        int level = levelOf(settings, PSI_STATS);
-        if (level != lastLevel) {
+        int level = psiOk ? levelOf(settings, PSI_STATS) : LEVEL_MODERATE;
+        if (psiOk && level != lastLevel) {
             lastLevel = level;
             Log.i("内存压力变化: " + PSI_STATS.toShortString() + " -> " + levelName(level));
         }
 
-        boolean forced = handleForcedRequest(settings);
         if (level == LEVEL_NORMAL && !forced)
             return;
 
@@ -317,7 +319,21 @@ public class MemoryService {
         }
 
         if (settings.foregroundReclaim && settings.enableReclaim) {
-            reclaimForegroundGroup(settings);
+            if (settings.dryRun) {
+                String dir = foregroundGroupDir;
+                if (dir == null)
+                    dir = CgroupMemory.findCgroupDir("memory.reclaim", FOREGROUND_GROUP_CANDIDATES);
+                if (dir != null) {
+                    long current = CgroupMemory.getCurrentBytes(dir);
+                    if (current > 0L) {
+                        long target = Math.min((long) (current * settings.reclaimRatio), settings.maxBytesPerApp);
+                        Log.i("[dryRun] 计划回收前台组 " + dir + ": " + formatBytes(current)
+                                + " -> memory.reclaim 目标 " + formatBytes(target));
+                    }
+                }
+            } else {
+                reclaimForegroundGroup(settings);
+            }
         }
     }
 

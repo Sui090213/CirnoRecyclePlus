@@ -59,6 +59,6 @@ else
 fi
 
 echo "********************************************"
-echo "- 正在打开设置界面..."
-am start -n "$PKG/.MemoryActivity" --user 0 >/dev/null 2>&1
+echo "- 正在打开 App (进去后点左上角齿轮进设置)..."
+am start -n "$PKG/.MainActivity" --user 0 >/dev/null 2>&1
 echo "********************************************"
