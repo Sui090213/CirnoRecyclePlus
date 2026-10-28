@@ -28,3 +28,6 @@ local.properties
 
 # 日志
 *.log
+
+# Kotlin 编译器会话文件
+.kotlin/

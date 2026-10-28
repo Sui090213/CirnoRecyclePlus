@@ -16,6 +16,15 @@ SKIPUNZIP=0
 PKG=com.flyingr.cirnorecycle
 MODULE_ID=cirno_recycle_plus
 
+# ---------------------------------------------------------------------------
+# 兼容性兜底: 极少数 root 方案 (或 KernelSU / APatch 的旧版本) 不会注入 Magisk 的
+# ui_print / abort / set_perm 等函数, 这里补一份最小实现, 保证安装脚本不会中途报错.
+# ---------------------------------------------------------------------------
+command -v ui_print >/dev/null 2>&1 || ui_print() { echo "$1"; }
+command -v abort >/dev/null 2>&1 || abort() { echo "$1"; exit 1; }
+command -v set_perm >/dev/null 2>&1 || set_perm() { :; }
+command -v set_perm_recursive >/dev/null 2>&1 || set_perm_recursive() { :; }
+
 ui_print "********************************************"
 ui_print "- Cirno Recycle+ v1.0.0 (作者: flyingr)"
 ui_print "- 基于 Cirno (GPL-3.0) 二次修改"

@@ -131,6 +131,10 @@ public class CompactHelper {
                 args[i] = true;              // shouldForceCompact
             } else if (type == int.class) {
                 args[i] = source;            // CompactSource
+            } else if (type.isEnum()) {
+                // 部分 Android 版本把 CompactProfile / CompactSource 做成了枚举,
+                // 这里按枚举常量名做保守匹配, 匹配不到就用第一个常量.
+                args[i] = pickEnumConstant(type);
             } else if (type == long.class) {
                 args[i] = 0L;
             } else if (type == float.class) {
@@ -147,6 +151,39 @@ public class CompactHelper {
         } catch (InvocationTargetException e) {
             throw e.getCause() == null ? e : e.getCause();
         }
+    }
+
+    /**
+     * 给枚举参数挑一个尽量合理的常量:
+     * <ul>
+     *     <li>CompactProfile: 优先 FULL / ANON / NORMAL</li>
+     *     <li>CompactSource: 优先 APP / SYSTEM / MEMORY_PRESSURE</li>
+     *     <li>其它枚举: 第一个常量</li>
+     * </ul>
+     * 选错最多是压缩效果不明显或被系统内部跳过, 不会造成误杀.
+     */
+    private static Object pickEnumConstant(Class<?> type) {
+        Object[] constants = type.getEnumConstants();
+        if (constants == null || constants.length == 0)
+            return null;
+
+        String typeName = type.getSimpleName();
+        String[] preferred;
+        if (typeName.contains("Profile")) {
+            preferred = new String[]{"FULL", "ANON", "NORMAL"};
+        } else if (typeName.contains("Source")) {
+            preferred = new String[]{"APP", "SYSTEM", "MEMORY_PRESSURE"};
+        } else {
+            preferred = new String[0];
+        }
+
+        for (String preferredName : preferred) {
+            for (Object constant : constants) {
+                if (constant instanceof Enum && ((Enum<?>) constant).name().contains(preferredName))
+                    return constant;
+            }
+        }
+        return constants[0];
     }
 
     /**
