@@ -8,6 +8,7 @@ import lombok.Setter;
 import nep.timeline.cirno.entity.AppRecord;
 import nep.timeline.cirno.reflect.CakeReflection;
 import nep.timeline.cirno.services.AppService;
+import nep.timeline.cirno.utils.ProcessStat;
 
 @Getter
 public class ProcessRecord {
@@ -20,8 +21,15 @@ public class ProcessRecord {
     private final String processName;
     @Getter(AccessLevel.NONE)
     private AppRecord appRecord;
+    /**
+     * 进程冻结状态: 会被 Freezer 线程 / 手动操作线程写, 被状态服务 (UI 显示) 和内存回收线程读,
+     * 必须 volatile, 否则界面可能显示过期状态.
+     */
     @Setter
-    private boolean frozen;
+    private volatile boolean frozen;
+    /** 进程启动时间缓存: -2 表示还没读过; 同一个进程生命周期内不会变, 读一次就够. */
+    @Getter(AccessLevel.NONE)
+    private volatile long startTimeCache = -2L;
 
     public ProcessRecord(Object instance) {
         this.instance = instance;
@@ -36,6 +44,21 @@ public class ProcessRecord {
 
     public int getPid() {
         return (int) CakeReflection.getObjectField(instance, "mPid");
+    }
+
+    /**
+     * 进程启动时间 (/proc/&lt;pid&gt;/stat 第 22 列, 时钟滴答数).
+     *
+     * <p>用于防止 pid 被系统复用后手动冻结错进程; 进程生命周期内不变, 所以缓存起来,
+     * 避免状态服务每 2 秒对所有进程都读一次 /proc.
+     */
+    public long getStartTime() {
+        long cached = startTimeCache;
+        if (cached == -2L) {
+            cached = ProcessStat.getStartTime(getPid());
+            startTimeCache = cached;
+        }
+        return cached;
     }
 
     public boolean isDeathProcess() {

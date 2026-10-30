@@ -19,6 +19,14 @@ public class ConfigManagerJson {
     private final String applicationSettingsName = "ApplicationSettings.json";
 
     /**
+     * 读写锁: App 进程里「读配置」和「写配置」可能在不同线程同时发生
+     * (界面打开时读、用户改开关时写队列在另一线程写). 不加锁的话, 读线程可能读到
+     * 排队中的旧文件, 并用旧对象替换掉 GlobalVars, 导致刚修改的设置被下一次保存写回旧值.
+     * 这里把两个方向的入口串行化; 读操作本身很快, 不会明显卡界面.
+     */
+    private final Object ioLock = new Object();
+
+    /**
      * system_server 侧读取配置 (以 root 直接读写文件).
      *
      * <p>关键约定: 文件存在但内容不完整 / 解析失败时, **保留内存里上一次的配置**,
@@ -26,6 +34,12 @@ public class ConfigManagerJson {
      * 文件是很正常的, 直接重置会把用户配置冲掉.
      */
     public void readConfig() {
+        synchronized (ioLock) {
+            readConfigInternal();
+        }
+    }
+
+    private void readConfigInternal() {
         try {
             File globalFile = new File(GlobalVars.CONFIG_DIR, globalSettingsName);
             if (!globalFile.exists()) {
@@ -84,6 +98,12 @@ public class ConfigManagerJson {
     }
 
     public void saveConfig() {
+        synchronized (ioLock) {
+            saveConfigInternal();
+        }
+    }
+
+    private void saveConfigInternal() {
         try {
             GlobalSettings globalSettings = GlobalVars.globalSettings;
             if (globalSettings != null) {
@@ -107,6 +127,12 @@ public class ConfigManagerJson {
      * false 表示首次运行 (文件还没生成), 界面可以用默认值, 但应提示用户.
      */
     public boolean readConfigSU() {
+        synchronized (ioLock) {
+            return readConfigSUInternal();
+        }
+    }
+
+    private boolean readConfigSUInternal() {
         boolean filesPresent = true;
         GlobalVars.configCorrupted = false;
 
@@ -161,6 +187,12 @@ public class ConfigManagerJson {
      * @return true 表示两个文件都写入并读回校验成功; false 表示写入失败 (调用方必须提示用户).
      */
     public boolean saveConfigSU() {
+        synchronized (ioLock) {
+            return saveConfigSUInternal();
+        }
+    }
+
+    private boolean saveConfigSUInternal() {
         try {
             GlobalSettings globalSettings = GlobalVars.globalSettings;
             if (globalSettings != null) {

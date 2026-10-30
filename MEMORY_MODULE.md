@@ -70,6 +70,7 @@ appRecord.isSystem()          -> 跳过（系统应用 / 当前输入法 / 白�
 appState.isVisible()          -> 跳过（可见应用）
 appState.isLocation/audio/recording/vpn -> 跳过（正在定位 / 放音 / 录音 / VPN）
 frozenOnly && !appRecord.isFrozen()      -> 跳过（默认只回收冻结应用）
+appOptions.allowReclaim == false         -> 跳过（长按面板里关掉了「允许内存回收」）
 没有存活进程                    -> 跳过
 cgroup memory.current < minCgroupBytes   -> 跳过（收益太低）
 ```
@@ -192,3 +193,82 @@ adb shell 'for f in /sys/fs/cgroup/*/uid_*/pid_*/cgroup.freeze; do [ "$(cat $f)"
 - L2 依赖系统 `CachedAppOptimizer` 的内部实现，属于反射调用：Android 大版本升级后方法签名可能变化，代码会动态适配，适配失败只降级不崩溃。
 - 前台三层压制都是**实验性**的：不同 ROM 的 cgroup 布局 / SELinux 策略差异很大，探测不到就跳过；`memory.high` 压得太低会造成卡顿，所以默认关闭、下限 50%、最低 512MB。
 - 回收量用 `memory.current` 前后差值估算，并发分配时会不准，只用于日志统计，不影响实际回收。
+
+## 12. 单应用冻结选项（v1.1.0）
+
+每个应用可以单独配置冻结行为，存在 `ApplicationSettings.json` 的 `appOptions` 里
+（key 是 `packageName#userId`，`AppOptions.java`）：
+
+| 字段 | 默认 | 作用 |
+|---|---|---|
+| `enabled` | `true` | 参与自动冻结；false 时这个应用永远不冻结（仍可被内存回收） |
+| `keepAudio` | `true` | 后台播放音频时跳过冻结；关掉后播放中也会冻 |
+| `keepNetwork` | `false` | 冻结时保留网络连接（Android 15 及以下跳过 `socketDestroy`） |
+| `keepAlarms` | `false` | 冻结时保留闹钟（跳过 `ForceAppStandbyListener.removeAlarmsForUid`） |
+| `allowReclaim` | `true` | 允许内存回收模块回收这个应用 |
+| `processMode` | `0` | `0` 冻结全部进程 / `1` 只冻结 `selectedProcesses` / `2` 排除 `selectedProcesses` |
+| `selectedProcesses` | `[]` | 进程规则用到的进程名集合 |
+
+`FreezerService.freezer()` 的流程因此变成：
+
+1. 应用 `isSystem()`（系统应用 / 输入法 / 白名单 / 内置白名单）→ 跳过；
+2. `enabled == false` → 跳过；
+3. 可见 / 定位 / 录音 / VPN → 跳过；音频且 `keepAudio` → 跳过；
+4. 逐个存活进程按 `processMode` 决定冻不冻；**只有全部存活进程都冻结成功**才：
+   - 设置 `appRecord.frozen = true`；
+   - 上报 `reportOneUidFrozenStateChanged` / `socketDestroy`（受 `keepNetwork` 影响）；
+   - 移除闹钟（受 `keepAlarms` 影响）；
+5. 只冻结了一部分时只记录进程级 `frozen` 标记，**不上报整个 uid 冻结**，避免系统按「整应用冻结」错误调度。
+
+对应的 `thaw()` 也改成遍历所有进程解冻，不再依赖 `appRecord.frozen`，所以「部分冻结」也能被正确解冻。
+
+## 13. 运行时状态 / 手动进程冻结通道（v1.1.0）
+
+App 与 system_server 不在同一进程，也没有现成的 binder 接口，所以用两个很小的文件通信
+（`/data/misc/CirnoRecycle/`，由 root 创建的 system:system 0770 目录）：
+
+| 文件 | 写入方 | 读取方 | 内容 |
+|---|---|---|---|
+| `RuntimeState.json` | system_server（`RuntimeStateService`） | App（`RuntimeClient`） | 有存活进程的应用列表、冻结进程数、每个进程的 pid / 名称 / 是否冻结、最后一次手动操作结果 |
+| `RuntimeActions.json` | App（`RuntimeClient.sendActions`） | system_server（`RuntimeStateService` 轮询） | 手动冻结 / 解冻应用或进程的操作列表 |
+
+可靠性设计：
+
+- **写文件原子化**：system_server 写临时文件再 `rename`；App 用 root 的 `临时文件 + mv`。读方永远读不到半个 JSON。
+- **开机标记**：两个文件都带 `bootTimeMs = System.currentTimeMillis() - SystemClock.elapsedRealtime()`。上一次开机残留的文件（比如模块被停用后留在磁盘上的旧操作）会因开机时间对不上被丢弃，绝不执行。
+- **单调序号**：`RuntimeActions.seq` 取 `max(当前时间戳, 旧序号 + 1)`；system_server 只执行比「已执行序号」更大的批次，模块软重启后第一次看到文件只登记基线、不重放。
+- **性能**：状态内容没变时只在超过 10 秒时补写一次心跳时间戳；应用没在跑就不写进状态文件，正常文件只有几 KB。
+- **过期判定**：App 侧要求状态文件是本次开机写的且 90 秒内更新过，否则显示「状态未知」，不会把旧状态当当前状态。
+- **安全限制（system_server 侧执行时校验）**：
+  - 应用 `isSystem()` / `enabled == false` → 拒绝冻结；
+  - 应用当前可见（前台）→ 拒绝冻结进程，避免卡住正在使用的界面；
+  - 正在录音 / 定位 / VPN，或音频且 `keepAudio` → 拒绝（应用级、进程级手动冻结都会检查）；
+  - 进程已退出 / 已经是目标状态 → 直接返回原因；
+  - 进程级操作会校验 pid 对应的进程启动时间（`RuntimeState.json` 里的 `startTime`，来自 `/proc/<pid>/stat`），
+    pid 被系统复用给别的进程时拒绝执行，避免冻错进程；
+  - 解冻不做限制。
+- **反馈**：执行结果（成功 / 拒绝原因）写回 `RuntimeState.json` 的 `lastActionMessage` / `lastActionAtMs`，界面用 Toast 显示。
+- **配置变化对齐**：`RuntimeStateService` 每 2 秒调用一次 `FreezerService.reconcile()`：
+  被设为「不冻结」/ 白名单的已冻结应用会被主动解冻；进程规则排除的已冻结进程会被解冻；
+  全部冻结但还没上报系统的会补一次通知（不移闹钟 / 断网由应用选项决定）。
+- **文件清理**：`RuntimeActions.json` 不会被 system_server 主动删除，只有两种情况会被删掉：
+  上一次开机残留（bootTime 对不上）、或者 seq 非法（手改 / long 溢出）——避免手动操作通道永久失效。
+- **软重启取舍**：如果操作已经写进文件、但 system_server 还没来得及执行就软重启（LSPosed 环境常见），
+  重启后第一次看到该文件会把它登记为「基线」而不是重放，避免开机时突然冻结某些应用。
+  这种情况下 App 里会显示「已发送」但状态没变，再点一次即可（界面上也会提示「操作已发送，正在执行…」后无结果）。
+
+## 14. 验证方法（补充手动冻结）
+
+```bash
+# 状态文件是否在刷新 (updatedAtMs 应该一直在变)
+adb shell su -c 'cat /data/misc/CirnoRecycle/RuntimeState.json' | head -c 400
+
+# 某个应用的进程冻结状态
+adb shell su -c 'cat /sys/fs/cgroup/apps/uid_*/pid_*/cgroup.freeze'
+
+# 手动操作通道 (App 里点「冻结」后这个文件会被更新; 正常执行后不会被删除)
+adb shell su -c 'cat /data/misc/CirnoRecycle/RuntimeActions.json'
+
+# 最近一次手动操作结果
+adb shell su -c 'grep -o "lastActionMessage[^,]*" /data/misc/CirnoRecycle/RuntimeState.json'
+```

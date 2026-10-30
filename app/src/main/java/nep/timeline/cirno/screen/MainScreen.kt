@@ -6,9 +6,10 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -29,15 +30,19 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -47,6 +52,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.topjohnwu.superuser.Shell
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
@@ -58,14 +66,17 @@ import nep.timeline.cirno.CommonConstants
 import nep.timeline.cirno.GlobalVars
 import nep.timeline.cirno.MemoryActivity
 import nep.timeline.cirno.R
+import nep.timeline.cirno.client.RuntimeClient
 import nep.timeline.cirno.configs.ConfigManager
 import nep.timeline.cirno.configs.checkers.AppConfigs
+import nep.timeline.cirno.runtime.RuntimeState
 import nep.timeline.cirno.utils.PKGUtils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.io.encoding.ExperimentalEncodingApi
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalEncodingApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalEncodingApi::class)
 @Composable
 fun MainScreen() {
     val handler = Handler(Looper.getMainLooper())
@@ -77,6 +88,7 @@ fun MainScreen() {
     )
 
     val context = LocalContext.current
+    val packageManager = context.packageManager
 
     fun getInstalledApps(context: Context): List<ApplicationInfo> {
         val packageManager = context.packageManager
@@ -91,6 +103,15 @@ fun MainScreen() {
     val configOk = remember { mutableStateOf(false) }
     val apps = remember { mutableStateOf<List<ApplicationInfo>>(emptyList()) }
 
+    // 运行时冻结状态: 状态文件只在模块存活时才有, 读不到就保持 null (界面按「未知」显示, 不能当成「未运行」).
+    var runtime by remember { mutableStateOf<RuntimeState?>(null) }
+
+    // 长按选中的应用, 非 null 时弹出底部设置面板.
+    var sheetApp by remember { mutableStateOf<ApplicationInfo?>(null) }
+
+    // 底部面板直接展开到最大高度, 避免折到一半时开关列表被截断.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     LaunchedEffect(Unit) {
         val hasRoot = withContext(Dispatchers.IO) {
             runCatching { Shell.getShell().isRoot }.getOrDefault(false)
@@ -98,13 +119,36 @@ fun MainScreen() {
         rootOk.value = hasRoot
         if (hasRoot) {
             configOk.value = withContext(Dispatchers.IO) {
-                runCatching { ConfigManager.manager.readConfigSU() }.getOrDefault(false)
+                runCatching {
+                    // 和配置写队列拿同一把锁, 避免读到还没落盘的旧配置.
+                    synchronized(nep.timeline.cirno.configs.ConfigWriter.LOCK) {
+                        ConfigManager.manager.readConfigSU()
+                    }
+                }.getOrDefault(false)
             }
         }
         // 应用列表和图标加载也放到 IO 线程, 避免主线程批量 loadIcon 造成首开卡顿.
         val loaded = withContext(Dispatchers.IO) { getInstalledApps(context) }
         handler.post {
             apps.value = loaded
+        }
+    }
+
+    // 轮询运行时状态: 每 2 秒读一次状态文件. 读文件要走 root (SuFile), 必须放 IO 线程.
+    // 只在界面 RESUMED 且没有弹出底部面板时轮询:
+    // - 退到后台 / 锁屏时停掉, 避免持续 root shell 唤醒耗电;
+    // - 面板打开时它自己有一份轮询, 这里不重复读.
+    LaunchedEffect(rootOk.value, sheetApp) {
+        if (!rootOk.value || sheetApp != null)
+            return@LaunchedEffect
+        val lifecycleOwner = context as? LifecycleOwner ?: return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                runtime = withContext(Dispatchers.IO) {
+                    runCatching { RuntimeClient.loadState() }.getOrNull()
+                }
+                delay(2000)
+            }
         }
     }
 
@@ -127,14 +171,21 @@ fun MainScreen() {
             appInfo.loadIcon(packageManager).toBitmap().asImageBitmap()
         }
         val userId = PKGUtils.getUserId(appInfo.uid)
-        val white = remember(appInfo) { AppConfigs.isWhiteApp(appInfo.packageName, userId) }
+        // 白名单状态不缓存: 长按面板里改完白名单后, 首页列表在 2 秒内轮询触发重组时能立刻刷新.
+        val white = AppConfigs.isWhiteApp(appInfo.packageName, userId)
+
+        // 配置损坏时禁止进应用页 / 长按: 否则白名单开关会用默认值整份覆盖配置, 绕过设置页的写锁.
+        val canOpen = rootOk.value && (configOk.value || !GlobalVars.configCorrupted)
 
         Row(
-            // 配置损坏时禁止进应用页: 否则白名单开关会用默认值整份覆盖配置, 绕过设置页的写锁.
-            modifier = if (rootOk.value && (configOk.value || !GlobalVars.configCorrupted))
+            modifier = if (canOpen)
                 Modifier
                     .fillMaxWidth()
-                    .padding(8.dp).clickable(onClick = { enterAppPage(appName, userId.toString(), appInfo.packageName) })
+                    .padding(8.dp)
+                    .combinedClickable(
+                        onClick = { enterAppPage(appName, userId.toString(), appInfo.packageName) },
+                        onLongClick = { sheetApp = appInfo }
+                    )
             else
                 Modifier
                     .fillMaxWidth()
@@ -157,6 +208,11 @@ fun MainScreen() {
                 Text(
                     text = (if (userId == 0) "" else "$userId#") + appInfo.packageName,
                     style = MaterialTheme.typography.bodySmall
+                )
+                AppStatusBadge(
+                    runtime = runtime,
+                    packageName = appInfo.packageName,
+                    userId = userId
                 )
             }
         }
@@ -199,8 +255,8 @@ fun MainScreen() {
                                 overflow = TextOverflow.Ellipsis
                             )
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                // 三态: 已激活 / 等待模块加载(有 root 但配置还没生成) / 未激活(没有 root).
-                                val active = rootOk.value && configOk.value
+                                // 四态: 已激活 / 有 root 但配置还没生成 / 配置有了但模块没在跑 / 没有 root.
+                                val active = rootOk.value && configOk.value && runtime != null
                                 val dotColor = when {
                                     active -> Color(0xFF4CAF50)
                                     rootOk.value -> Color(0xFFFFA000)
@@ -208,6 +264,7 @@ fun MainScreen() {
                                 }
                                 val statusText = when {
                                     active -> "已激活"
+                                    rootOk.value && configOk.value -> "模块未响应"
                                     rootOk.value -> "等待模块加载"
                                     else -> "未激活(需要 root)"
                                 }
@@ -250,7 +307,6 @@ fun MainScreen() {
             return@Scaffold
         }
 
-        val packageManager = context.packageManager
         Surface(
             modifier = Modifier.hazeSource(
                 state = hazeState
@@ -281,5 +337,58 @@ fun MainScreen() {
                 }
             }
         }
+    }
+
+    // 长按应用弹出的底部设置面板: 内容和详情页完全一致, 直接复用 AppSettingsContent.
+    // 面板关闭后不需要手动刷新, 首页的轮询会在 2 秒内更新状态徽章.
+    sheetApp?.let { app ->
+        val appLabel = remember(app) { app.loadLabel(packageManager).toString() }
+        ModalBottomSheet(
+            onDismissRequest = { sheetApp = null },
+            sheetState = sheetState,
+        ) {
+            AppSettingsContent(
+                appName = appLabel,
+                packageName = app.packageName,
+                userId = PKGUtils.getUserId(app.uid),
+            )
+        }
+    }
+}
+
+/** 应用列表里的冻结状态徽章: 一眼看出每个应用当前是冻结 / 前台 / 后台. */
+@Composable
+private fun AppStatusBadge(runtime: RuntimeState?, packageName: String, userId: Int) {
+    // 读不到状态文件 = 模块没在运行 / 状态未知. 此时不显示徽章, 顶部状态栏已经有提示,
+    // 不能把「未知」显示成「未运行」.
+    if (runtime == null)
+        return
+
+    val appState = RuntimeClient.findApp(runtime, packageName, userId)
+    val (text, color) = when {
+        appState == null -> "未运行" to Color.Gray
+        appState.frozenProcesses > 0 && appState.frozenProcesses >= appState.liveProcesses ->
+            "❄ 已冻结" to Color(0xFF4CAF50)
+        appState.frozenProcesses > 0 -> "部分冻结" to Color(0xFFFFA000)
+        appState.visible -> "前台运行" to Color(0xFF2196F3)
+        appState.audio -> "后台播放" to Color(0xFF9C27B0)
+        else -> "后台运行 · ${appState.liveProcesses} 进程" to Color(0xFF757575)
+    }
+
+    Row(
+        modifier = Modifier.padding(top = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .background(color = color, shape = CircleShape)
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = color
+        )
     }
 }

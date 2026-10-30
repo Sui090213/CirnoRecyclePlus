@@ -466,6 +466,10 @@ public class MemoryService {
         if (appRecord == null || appRecord.isSystem())
             return false;
 
+        // 应用级选项: 长按面板里可以关掉「允许内存回收」, 比如对某个后台但需要保持热数据的应用.
+        if (!nep.timeline.cirno.configs.checkers.AppConfigs.isReclaimAllowed(appRecord))
+            return false;
+
         AppState appState = appRecord.getAppState();
         if (appState == null)
             return false;

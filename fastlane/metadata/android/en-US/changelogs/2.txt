@@ -1,0 +1,1 @@
+v1.1.0: frozen-status badges, per-app freeze options (long-press), per-process selective freeze with manual freeze/thaw, simplified memory settings with presets, plus the v1.0.0 memory reclaim and foreground suppression.

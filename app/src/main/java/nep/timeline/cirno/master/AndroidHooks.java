@@ -34,6 +34,7 @@ import nep.timeline.cirno.hooks.android.signal.SendSignalQuietHook;
 import nep.timeline.cirno.hooks.android.vpn.VpnStateHook;
 import nep.timeline.cirno.hooks.android.wakelock.WakeLockHook;
 import nep.timeline.cirno.memory.MemoryService;
+import nep.timeline.cirno.runtime.RuntimeStateService;
 import nep.timeline.cirno.services.BinderService;
 
 public class AndroidHooks {
@@ -93,5 +94,7 @@ public class AndroidHooks {
         BinderService.start(classLoader);
         // Memory
         MemoryService.start();
+        // Runtime state (冻结状态显示 / 手动进程冻结通道)
+        RuntimeStateService.start();
     }
 }

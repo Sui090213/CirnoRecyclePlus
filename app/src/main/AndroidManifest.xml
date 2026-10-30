@@ -19,7 +19,7 @@
             android:value="flyingr" />
         <meta-data
             android:name="com.flyingr.version"
-            android:value="1.0.0" />
+            android:value="1.1.0" />
 
         <activity
             android:name=".ApplicationActivity"

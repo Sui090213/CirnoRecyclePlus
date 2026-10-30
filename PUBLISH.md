@@ -29,17 +29,17 @@ $git = 'D:\deepseek\tools\git\cmd\git.exe'
 如果开了两步验证，密码位置要填 **Personal Access Token**（GitHub → Settings → Developer settings
 → Personal access tokens → Fine-grained tokens，勾选该仓库的 `Contents: Read and write`）。
 
-## 3. 打 tag 并发布 v1.0.0
+## 3. 打 tag 并发布 v1.1.0
 
 ```powershell
-& $git tag -a v1.0.0 -m "Cirno Recycle+ v1.0.0"
-& $git push origin v1.0.0
+& $git tag -a v1.1.0 -m "Cirno Recycle+ v1.1.0"
+& $git push origin v1.1.0
 ```
 
 推送 tag 后，`.github/workflows/release.yml` 会自动：
 
 1. 用 JDK 25 + Android SDK 36 构建 Release APK（仓库自带公开签名密钥，自动签名）；
-2. 跑 `scripts/package-module.sh` 打包成 `dist/Cirno-Recycle-Plus-v1.0.0.zip`；
+2. 跑 `scripts/package-module.sh` 打包成 `dist/Cirno-Recycle-Plus-v1.1.0.zip`；
 3. 创建 GitHub Release，上传模块 zip 和 `CHECKSUMS.txt`。
 
 第一次跑 Actions 大约需要 8–15 分钟（要下载 Gradle 依赖）。在仓库的 **Actions** 页面可以看进度。
@@ -49,16 +49,16 @@ $git = 'D:\deepseek\tools\git\cmd\git.exe'
 GitHub Release 页面拿到模块 zip 的固定下载地址：
 
 ```
-https://github.com/<你的用户名>/CirnoRecyclePlus/releases/latest/download/Cirno-Recycle-Plus-v1.0.0.zip
+https://github.com/<你的用户名>/CirnoRecyclePlus/releases/latest/download/Cirno-Recycle-Plus-v1.1.0.zip
 ```
 
 在仓库根目录新建 `update.json`：
 
 ```json
 {
-  "version": "v1.0.0",
-  "versionCode": 10000,
-  "zipUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/latest/download/Cirno-Recycle-Plus-v1.0.0.zip",
+  "version": "v1.1.0",
+  "versionCode": 11000,
+  "zipUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/latest/download/Cirno-Recycle-Plus-v1.1.0.zip",
   "changelog": "https://raw.githubusercontent.com/<你的用户名>/CirnoRecyclePlus/main/CHANGELOG.md"
 }
 ```
@@ -84,7 +84,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package-module.ps1
 
 产物在 `dist\`：
 
-- `Cirno-Recycle-Plus-v1.0.0.zip`：可直接刷入的模块
+- `Cirno-Recycle-Plus-v1.1.0.zip`：可直接刷入的模块
 - `CHECKSUMS.txt`：SHA256
 
 ## 6. 发布前自检清单

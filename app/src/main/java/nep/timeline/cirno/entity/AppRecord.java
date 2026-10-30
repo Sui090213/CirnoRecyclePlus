@@ -25,6 +25,13 @@ public class AppRecord {
     private volatile AppState appState;
     /** 冻结状态会被 Freezer / Binder 线程写、被 Memory 线程读, 必须 volatile. */
     private volatile boolean frozen;
+    /**
+     * 是否已经向系统上报过「整个 uid 已冻结」(reportOneUidFrozenStateChanged / socketDestroy / 移闹钟).
+     *
+     * <p>只有全部存活进程都冻结时才会上报; 上报之后即使进程自然死亡导致又走进「已全部冻结」的
+     * 早退分支, 也不能重复上报, 解冻时也要知道该不该上报 unfrozen.
+     */
+    private volatile boolean reportedFrozen;
     private final List<ProcessRecord> processRecords = new CopyOnWriteArrayList<>();
 
     public AppRecord(ApplicationInfo applicationInfo) {
@@ -47,6 +54,7 @@ public class AppRecord {
 
     public void reset() {
         this.frozen = false;
+        this.reportedFrozen = false;
         this.appState = new AppState(this);
     }
 

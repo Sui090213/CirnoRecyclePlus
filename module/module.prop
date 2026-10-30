@@ -1,6 +1,6 @@
 id=cirno_recycle_plus
 name=Cirno Recycle+
-version=v1.0.0
-versionCode=10000
+version=v1.1.0
+versionCode=11000
 author=flyingr
-description=Cirno 二改：冻结后台应用 + 冻结后内存回收（cgroup v2 memory.reclaim / 进程压缩），新增前台内存压制与 UI 开关；刷入后自动安装配套 APK。基于 Nep-Timeline/Cirno (GPL-3.0) 二次修改。
+description=Cirno 二改：冻结后台应用 + 冻结后内存回收（cgroup v2 memory.reclaim / 进程压缩），新增冻结状态显示、单应用冻结选项、进程级选择性冻结、简化设置界面与前台内存压制；刷入后自动安装配套 APK。基于 Nep-Timeline/Cirno (GPL-3.0) 二次修改。

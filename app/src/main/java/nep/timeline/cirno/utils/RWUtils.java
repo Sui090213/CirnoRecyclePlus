@@ -85,6 +85,15 @@ public class RWUtils {
             }
         }
 
+        // 文件是 root shell 创建的 (属主 root, 权限受 umask 影响). system_server 以 system 用户
+        // 读这些文件 (配置热重载 / 手动冻结操作), 如果 umask 是 077 就会读不到, 表现为
+        // 「App 里改了设置但 system_server 一直不生效」. 这里显式放开读权限, 保证跨进程可读.
+        Shell.Result chmodResult = Shell.cmd("chmod 0644 '" + target + "'").exec();
+        if (!chmodResult.isSuccess()) {
+            // 不抛异常: 文件本身已经写成功了 (App 自己能读回校验); 只提示排查方向.
+            Log.w("chmod 0644 失败, system_server 可能读不到 " + target + ": " + chmodResult.getErr());
+        }
+
         // 读回校验: PrintWriter / root shell 都可能静默失败, 不校验的话 UI 会以为保存成功.
         String readBack = readConfig(new SuFile(target));
         if (readBack == null || !readBack.equals(value)) {
@@ -93,9 +102,16 @@ public class RWUtils {
     }
 
     public static boolean writeFrozen(String path, int value) {
-        try (PrintWriter writer = new PrintWriter(path)) {
-            writer.write(Integer.toString(value));
-            return true;
+        try {
+            PrintWriter writer = new PrintWriter(path);
+            try {
+                writer.write(Integer.toString(value));
+                writer.flush();
+                // PrintWriter 会吞掉写失败 (比如 cgroup 只读 / 进程已退出), 必须自己检查.
+                return !writer.checkError();
+            } finally {
+                writer.close();
+            }
         } catch (FileNotFoundException ignored) {
             Log.e(path + " | 文件不存在, 此进程可能已死亡, 或者你的设备不支持cgroup v2");
             return false;

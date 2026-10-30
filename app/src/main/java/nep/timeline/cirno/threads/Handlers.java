@@ -17,6 +17,8 @@ public class Handlers {
     public static final Handler memory = makeHandlerBackground("Memory");
     public static final Handler log = makeHandlerBackground("Log");
     public static final Handler config = makeHandlerBackground("Config");
+    /** 运行时状态服务 (冻结状态显示 / 手动进程冻结). */
+    public static final Handler runtime = makeHandlerBackground("Runtime");
 
     public static Handler makeHandlerForeground(String str) {
         return makeHandlerForeground(str, false);
