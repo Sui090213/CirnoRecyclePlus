@@ -300,7 +300,7 @@ A：先看 `/data/adb/modules/cirno_recycle_plus/install.log`。如果模块目�
 A：这只是提示。LSPosed 必须在刷入前就装好（Zygisk 版 + 已启用），否则模块代码不会加载。装好 LSPosed 后重新刷入模块并重启即可。
 
 **Q：能卸载吗？**
-A：在 root 管理器里删除模块并重启即可。支持 `/data/adb/service.d` 的 root 方案（Magisk、较新的 KernelSU/APatch）会通过清理脚本自动卸载配套 App；如果你的环境没有执行该脚本，重启后 App 可能仍在，手动卸载 `com.flyingr.cirnorecycle` 即可。配置目录默认保留，彻底清理请手动 `rm -rf /data/misc/CirnoRecycle`。
+A：在 root 管理器里删除模块并重启即可。支持 `/data/adb/service.d` 的 root 方案（Magisk、较新的 KernelSU/APatch）会通过清理脚本自动卸载配套 App；如果你的环境没有执行该脚本，重启后 App 可能仍在，手动卸载 `com.flyingr.cirnorecycle` 即可。配置目录默认保留，彻底清理请手动 `rm -rf /data/misc/CirnoRecycle`。（会变成猫娘）
 
 ## 二改声明 & 版权
 
