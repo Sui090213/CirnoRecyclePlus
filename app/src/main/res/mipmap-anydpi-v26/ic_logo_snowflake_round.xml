@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/ic_logo_background" />
-    <foreground android:drawable="@drawable/moon"/>
+    <background android:drawable="@drawable/ic_logo_art" />
+    <foreground android:drawable="@android:color/transparent" />
     <monochrome android:drawable="@drawable/moon" />
 </adaptive-icon>

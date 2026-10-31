@@ -1,0 +1,1 @@
+v1.2.1: fixes FCM / vendor push notifications not arriving after the module freezes apps — Google push services are protected, push broadcasts thaw the target with a 15s delivery window and are never skipped, service starts transiently wake frozen apps, and the "keep network when frozen" option now works on Android 16. Adds a per-app "wake on push" toggle.

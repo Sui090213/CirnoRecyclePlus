@@ -11,7 +11,15 @@ public interface CommonConstants {
             ANDROID,
             SHELL,
             "moe.shizuku.privileged.api", /* Shizuku */
+            "com.google.android.gms", /* Google Play 服务: FCM 长连接 / 推送投递, 冻结它等于切断 FCM */
             "com.google.android.gsf", /* 谷歌服务框架 */
+            "com.android.vending", /* Play 商店: GMS 推送依赖它更新/登录状态 */
+            "com.google.android.configupdater", /* Google 配置更新 */
+            "com.google.android.ext.services", /* Google 核心服务组件 */
+            "com.google.android.ext.shared", /* Google 核心服务组件 */
+            "app.revanced.android.gms", /* MicroG */
+            "app.revanced.android.gsf", /* MicroG GSF */
+            "com.microg.vending", /* MicroG 商店 */
             "com.xiaomi.xmsf", /* 小米服务框架 */
             "com.huawei.hwid", /* HMS核心 */
             "io.heckel.ntfy", /* NTFY */

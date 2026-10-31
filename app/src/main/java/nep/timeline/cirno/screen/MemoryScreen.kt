@@ -1,5 +1,6 @@
 package nep.timeline.cirno.screen
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -45,12 +46,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import com.topjohnwu.superuser.Shell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import nep.timeline.cirno.BuildConfig
 import nep.timeline.cirno.GlobalVars
 import nep.timeline.cirno.MemoryActivity
+import nep.timeline.cirno.R
+import nep.timeline.cirno.client.UpdateChecker
 import nep.timeline.cirno.configs.ConfigManager
 import nep.timeline.cirno.configs.ConfigWriter
 import nep.timeline.cirno.configs.settings.GlobalSettings
@@ -263,6 +268,10 @@ fun MemoryScreen(activity: MemoryActivity) {
     var advancedExpanded by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
 
+    // 更新检查: 手动检查有新版时弹对话框; checkingUpdate 防止重复点击.
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+
     fun refreshPressure() {
         scope.launch(Dispatchers.IO) {
             val text = runCatching {
@@ -394,11 +403,38 @@ fun MemoryScreen(activity: MemoryActivity) {
         }
     }
 
+    /** 手动检查更新: 有新版弹对话框, 已是最新 / 失败用 Toast 提示. */
+    fun checkUpdateNow() {
+        if (checkingUpdate)
+            return
+        checkingUpdate = true
+        scope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) { UpdateChecker.check() }
+            }.getOrNull()
+            checkingUpdate = false
+            when (result) {
+                is UpdateChecker.Result.Available -> updateInfo = result.info
+                is UpdateChecker.Result.UpToDate -> Toast.makeText(
+                    activity,
+                    "当前已是最新版本 (v${BuildConfig.VERSION_NAME})",
+                    Toast.LENGTH_SHORT
+                ).show()
+                is UpdateChecker.Result.Failed -> Toast.makeText(
+                    activity,
+                    "检查更新失败: ${result.message}",
+                    Toast.LENGTH_SHORT
+                ).show()
+                null -> Toast.makeText(activity, "检查更新失败", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.largeTopAppBarColors(),
-                title = { Text("内存回收设置") },
+                title = { Text("设置") },
                 navigationIcon = {
                     TextButton(onClick = { activity.finish() }) {
                         Text("返回")
@@ -428,6 +464,13 @@ fun MemoryScreen(activity: MemoryActivity) {
                         refreshPressure()
                         refreshLog()
                     }
+                )
+
+                // 外观 / 通用设置不依赖 root 和 system_server 配置, 没有 root 时也应该能用.
+                AppearanceSettingsCard()
+                GeneralSettingsCard(
+                    checkingUpdate = checkingUpdate,
+                    onCheckUpdate = { checkUpdateNow() }
                 )
 
                 if (current == null) {
@@ -800,7 +843,9 @@ fun MemoryScreen(activity: MemoryActivity) {
                     // F. 页脚
                     // ----------------------------------------------------------
                     Text(
-                        text = "Cirno Recycle+ v1.1.0 · 作者 flyingr\n基于 Nep-Timeline/Cirno (GPL-3.0) 二次修改, 开源且免费",
+                        text = "Cirno Recycle+ v" + BuildConfig.VERSION_NAME +
+                            " · 作者 " + stringResource(R.string.app_author) +
+                            "\n基于 Nep-Timeline/Cirno (GPL-3.0) 二次修改, 开源且免费",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 24.dp)
@@ -831,6 +876,14 @@ fun MemoryScreen(activity: MemoryActivity) {
                     Text("取消")
                 }
             }
+        )
+    }
+
+    // 手动检查更新发现新版本时弹提示.
+    updateInfo?.let { info ->
+        UpdateAvailableDialog(
+            info = info,
+            onDismiss = { updateInfo = null }
         )
     }
 }

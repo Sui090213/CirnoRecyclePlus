@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -31,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -45,6 +48,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -66,7 +71,9 @@ import nep.timeline.cirno.CommonConstants
 import nep.timeline.cirno.GlobalVars
 import nep.timeline.cirno.MemoryActivity
 import nep.timeline.cirno.R
+import nep.timeline.cirno.client.AppPrefs
 import nep.timeline.cirno.client.RuntimeClient
+import nep.timeline.cirno.client.UpdateChecker
 import nep.timeline.cirno.configs.ConfigManager
 import nep.timeline.cirno.configs.checkers.AppConfigs
 import nep.timeline.cirno.runtime.RuntimeState
@@ -103,6 +110,17 @@ fun MainScreen() {
     val configOk = remember { mutableStateOf(false) }
     val apps = remember { mutableStateOf<List<ApplicationInfo>>(emptyList()) }
 
+    // 应用名缓存: 搜索时要按名字过滤, 不能在每次输入时对全部应用调 loadLabel (主线程会卡).
+    var appLabels by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+
+    // 首页搜索: 右上角搜索按钮展开输入框, 支持应用名 / 包名.
+    var searchVisible by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    val searchFocusRequester = remember { FocusRequester() }
+
+    // 启动自动检查更新: 发现新版本时弹提示.
+    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+
     // 运行时冻结状态: 状态文件只在模块存活时才有, 读不到就保持 null (界面按「未知」显示, 不能当成「未运行」).
     var runtime by remember { mutableStateOf<RuntimeState?>(null) }
 
@@ -128,10 +146,33 @@ fun MainScreen() {
             }
         }
         // 应用列表和图标加载也放到 IO 线程, 避免主线程批量 loadIcon 造成首开卡顿.
-        val loaded = withContext(Dispatchers.IO) { getInstalledApps(context) }
-        handler.post {
-            apps.value = loaded
+        val loaded = withContext(Dispatchers.IO) {
+            val list = getInstalledApps(context)
+            val pm = context.packageManager
+            val labels = list.associate { info ->
+                info.packageName to runCatching { info.loadLabel(pm).toString() }.getOrDefault(info.packageName)
+            }
+            list to labels
         }
+        handler.post {
+            apps.value = loaded.first
+            appLabels = loaded.second
+        }
+    }
+
+    // 启动时自动检查更新: 默认 12 小时内只查一次, 失败也记一次, 避免每次打开都走一次网络.
+    LaunchedEffect(Unit) {
+        if (!AppPrefs.autoCheckUpdate)
+            return@LaunchedEffect
+        val now = System.currentTimeMillis()
+        if (now - AppPrefs.lastUpdateCheckAt() < 12L * 60L * 60L * 1000L)
+            return@LaunchedEffect
+
+        val result = withContext(Dispatchers.IO) {
+            runCatching { UpdateChecker.check() }.getOrNull()
+        }
+        AppPrefs.markUpdateChecked()
+        (result as? UpdateChecker.Result.Available)?.let { updateInfo = it.info }
     }
 
     // 轮询运行时状态: 每 2 秒读一次状态文件. 读文件要走 root (SuFile), 必须放 IO 线程.
@@ -220,7 +261,6 @@ fun MainScreen() {
 
     Scaffold(
         topBar = {
-            val navIconSize = 48.dp
             TopAppBar(
                 colors = TopAppBarDefaults.largeTopAppBarColors(Color.Transparent),
                 modifier = Modifier
@@ -241,10 +281,7 @@ fun MainScreen() {
                 },
                 title = {
                     Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(start = navIconSize)
-                            .padding(end = navIconSize),
+                        Modifier.fillMaxWidth(),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -289,7 +326,17 @@ fun MainScreen() {
                     }
                 },
                 actions = {
-                    Spacer(modifier = Modifier.width(navIconSize))
+                    IconButton(onClick = {
+                        searchVisible = !searchVisible
+                        if (!searchVisible)
+                            searchQuery = ""
+                    }) {
+                        Icon(
+                            imageVector = if (searchVisible) Icons.Default.Close else Icons.Default.Search,
+                            contentDescription = if (searchVisible) "关闭搜索" else "搜索应用",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             )
         },
@@ -314,25 +361,119 @@ fun MainScreen() {
             color = MaterialTheme.colorScheme.background
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                val sortedApps = remember(apps.value) {
-                    apps.value.sortedByDescending {
-                        AppConfigs.isWhiteApp(it.packageName, PKGUtils.getUserId(it.uid))
+                // 搜索过滤: 名字和包名都匹配, 不区分大小写.
+                val filteredApps = remember(apps.value, appLabels, searchQuery) {
+                    val query = searchQuery.trim()
+                    if (query.isEmpty()) {
+                        apps.value
+                    } else {
+                        apps.value.filter { info ->
+                            val label = appLabels[info.packageName] ?: info.packageName
+                            label.contains(query, ignoreCase = true) ||
+                                info.packageName.contains(query, ignoreCase = true)
+                        }
                     }
                 }
-                LazyColumn(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    //state = listState,
-                    contentPadding = PaddingValues(top = padding.calculateTopPadding())
-                ) {
-                    // 用 items() 而不是把所有应用塞进一个 item: LazyColumn 只组合可见项,
-                    // 应用多时不会一次性加载全部图标.
-                    items(
-                        items = sortedApps,
-                        key = { appInfo -> appInfo.uid.toString() + "#" + appInfo.packageName }
-                    ) { appInfo ->
-                        AppItem(appInfo, packageManager)
+
+                // 排序:
+                // 1. 可在设置里选择「后台运行的应用优先」: 把当前有存活进程但不在前台的应用排最前面;
+                // 2. 数量多的优先 (后台进程越多越值得注意);
+                // 3. 白名单应用次优先 (和旧版行为一致);
+                // 4. 最后按应用名排序, 方便查找.
+                val sortedApps = remember(filteredApps, runtime, AppPrefs.sortBackgroundFirst) {
+                    val backgroundFirst = AppPrefs.sortBackgroundFirst
+                    filteredApps.sortedWith(
+                        compareBy<ApplicationInfo> { info ->
+                            if (!backgroundFirst) {
+                                0
+                            } else {
+                                val state = RuntimeClient.findApp(runtime, info.packageName, PKGUtils.getUserId(info.uid))
+                                if (state != null && state.liveProcesses > 0 && !state.visible) 0 else 1
+                            }
+                        }.thenByDescending { info ->
+                            if (!backgroundFirst) {
+                                0
+                            } else {
+                                RuntimeClient.findApp(runtime, info.packageName, PKGUtils.getUserId(info.uid))?.liveProcesses ?: 0
+                            }
+                        }.thenByDescending { info ->
+                            AppConfigs.isWhiteApp(info.packageName, PKGUtils.getUserId(info.uid))
+                        }.thenBy { info ->
+                            (appLabels[info.packageName] ?: info.packageName).lowercase()
+                        }
+                    )
+                }
+
+                if (searchVisible) {
+                    // 展开搜索时自动聚焦并弹出输入法; 输入框本身在顶栏下方, 不会被键盘挡住.
+                    LaunchedEffect(searchVisible) {
+                        runCatching { searchFocusRequester.requestFocus() }
+                    }
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = 12.dp,
+                                end = 12.dp,
+                                top = padding.calculateTopPadding() + 4.dp,
+                                bottom = 4.dp
+                            )
+                            .focusRequester(searchFocusRequester),
+                        placeholder = { Text("搜索应用名或包名") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null
+                            )
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "清空搜索"
+                                    )
+                                }
+                            }
+                        },
+                        singleLine = true
+                    )
+                }
+
+                if (sortedApps.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "没有匹配的应用",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        //state = listState,
+                        contentPadding = PaddingValues(
+                            top = if (searchVisible) 0.dp else padding.calculateTopPadding(),
+                            bottom = 16.dp
+                        )
+                    ) {
+                        // 用 items() 而不是把所有应用塞进一个 item: LazyColumn 只组合可见项,
+                        // 应用多时不会一次性加载全部图标.
+                        items(
+                            items = sortedApps,
+                            key = { appInfo -> appInfo.uid.toString() + "#" + appInfo.packageName }
+                        ) { appInfo ->
+                            AppItem(appInfo, packageManager)
+                        }
                     }
                 }
             }
@@ -353,6 +494,14 @@ fun MainScreen() {
                 userId = PKGUtils.getUserId(app.uid),
             )
         }
+    }
+
+    // 启动时自动检查更新, 有新版就弹提示 (和设置页「检查更新」共用同一个对话框).
+    updateInfo?.let { info ->
+        UpdateAvailableDialog(
+            info = info,
+            onDismiss = { updateInfo = null }
+        )
     }
 }
 

@@ -1,0 +1,1 @@
+v1.2.0: in-app update checker, dark mode (system/light/dark), custom theme color + Material You dynamic color, home search, background-first app sorting, full process list (including inactive processes), and partial freezing for whitelisted apps; fixes for config changes not taking effect until the next background event.

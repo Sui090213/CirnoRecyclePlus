@@ -1,6 +1,7 @@
 id=cirno_recycle_plus
 name=Cirno Recycle+
-version=v1.1.0
-versionCode=11000
+version=v1.2.1
+versionCode=12001
 author=flyingr
-description=Cirno 二改：冻结后台应用 + 冻结后内存回收（cgroup v2 memory.reclaim / 进程压缩），新增冻结状态显示、单应用冻结选项、进程级选择性冻结、简化设置界面与前台内存压制；刷入后自动安装配套 APK。基于 Nep-Timeline/Cirno (GPL-3.0) 二次修改。
+description=Cirno 二改：冻结后台应用 + 冻结后内存回收（cgroup v2 memory.reclaim / 进程压缩），新增冻结状态显示、单应用冻结选项、进程级选择性冻结（含白名单应用的子进程部分冻结）、简化设置界面与前台内存压制、应用内更新提示、深色模式 / 自定义主题色 / 莫奈取色；v1.2.1 修复 FCM / 厂商推送在冻结后收不到的问题（保护 Google 推送服务、推送广播先解冻并给 15 秒投递窗口、服务启动唤醒、推送跳过广播的放行）。刷入后自动安装配套 APK。基于 Nep-Timeline/Cirno (GPL-3.0) 二次修改。
+updateJson=https://raw.githubusercontent.com/Sui090213/CirnoRecyclePlus/main/update.json

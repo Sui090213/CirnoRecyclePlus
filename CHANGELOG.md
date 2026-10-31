@@ -3,6 +3,120 @@
 本文件只记录 **Cirno Recycle+（二改版）** 相对上游 Cirno 的改动。上游自己的更新记录请见
 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)。
 
+## v1.2.1 — 2026-10-31
+
+修复「安装模块后 FCM / 厂商推送收不到」的问题。推送链路本身没问题，是冻结逻辑把
+「GMS → 推送广播 → 目标应用」这条路挡住了：目标应用被冻结时广播被跳过 / 投递 Binder 排队，
+应用刚被推送拉起又被 3 秒后的冻结计时器冻回去。
+
+### 修复
+
+- **Google 推送基础设施默认保护**
+  - `com.google.android.gms`（FCM 长连接）、`com.google.android.gsf`、`com.android.vending`、
+    `com.google.android.configupdater`、`com.google.android.ext.services`、
+    `com.google.android.ext.shared` 以及 MicroG 相关包加入内置保护名单；
+  - 这些包无论是不是系统应用都不会被冻结 / 回收。之前如果 GMS 是作为普通 APK 装的（国内很常见），
+    会被当成普通后台应用冻结，FCM 长连接直接被切断。
+- **推送广播真正先解冻**
+  - `BroadcastIntentHook` 不再用硬编码参数下标找 `Intent`，改成遍历参数按类型找；
+    部分 OEM（ColorOS 16/17 等）改了 `broadcastIntentLocked` 参数布局，旧实现会找不到 Intent，
+    解冻完全失效；
+  - 额外兜底 hook `ActivityManagerService.broadcastIntentWithFeature` / `broadcastIntent` /
+    `broadcastIntentWithCallback` 等 binder 入口，防止 ROM 把内部方法换类 / 改名；
+  - 改为按包名解冻（不再依赖 userId 参数），并覆盖 FCM、UnifiedPush、魅族 / 华为 / 小米 /
+    vivo / OPPO 厂商推送 action（原代码里 UnifiedPush / 魅族推送因为条件写反，实际上不会被解冻）。
+- **推送广播不再被跳过**
+  - `BroadcastSkipHook` 适配 AOSP 14+/16 的 `shouldSkipMessage(BroadcastRecord, Object)` 签名
+    （原实现只匹配 `(BroadcastRecord, BroadcastFilter)`，在 AOSP 16 上其实没装上）；
+  - 推送类广播**永不跳过**，并在决定投递前再解冻一次（双保险）；
+  - 非推送广播仍然跳过冻结进程，保持原来的省电行为。
+- **推送投递窗口（15 秒）**
+  - 收到推送后按包名记录一个 15 秒的免冻结窗口：即使进程是刚被推送拉起的、还没来得及创建
+    AppRecord，`ProcessAddHook` 3 秒后的冻结也会被挡住，应用有足够时间处理广播、启动 service、
+    拉取消息正文；窗口结束后恢复冻结。
+- **服务启动 / 绑定唤醒**
+  - 新增 `ServiceStartHook`：FCM 在部分 GMS 版本上通过 `startService` / `bindService` 投递，
+    冻结应用会先被解冻 15 秒，服务能正常启动。
+- **「冻结时保留网络连接」在 Android 16 生效**
+  - 原实现只在 Android 15 及以下跳过 `socketDestroy`；Android 16 走
+    `reportOneUidFrozenStateChanged`，系统的冻结网络策略仍会断网。现在 `keepNetwork` 打开时
+    不再上报 uid frozen，真正保留网络。
+- **新增单应用开关「收到推送时解冻」**（`AppOptions.wakeOnPush`，默认开）
+  - 应用面板里可以关闭；关闭后推送广播仍会投递，但不会额外解冻 15 秒。
+- 版本 1.2.0 → 1.2.1，APK `versionCode=4`，模块 `versionCode=12001`。
+
+### 测试
+
+- `AppOptionsLogicTest` 增加 `wakeOnPush` 默认值 / 旧 JSON 兼容 / 序列化往返断言；
+- 全部 21 个单元测试通过；`assembleDebug` / `assembleRelease` 通过。
+
+## v1.2.0 — 2026-10-31
+
+在 v1.1.0 的基础上补齐「日常使用顺手」的部分：应用内更新提示、深色模式 / 自定义主题色 / 莫奈取色、
+首页搜索与后台优先排序、完整进程列表，以及白名单应用的部分冻结。
+
+### 新增
+
+- **应用内更新提示**
+  - 启动时读取仓库根目录的 `update.json`（`raw.githubusercontent.com` 失败时自动尝试 jsDelivr 镜像），
+    比较版本名（例如 `1.2.0`）判断是否有新版（APK 的 `versionCode` 是小整数，不能和模块的
+    `versionCode=12000` 直接比较）；12 小时内最多检查一次，失败也静默处理，不打扰使用；
+  - 发现新版本弹窗显示版本号和更新日志（截取 CHANGELOG 前 1200 字），「去下载」优先打开 APK 直链，
+    没有 APK 时回退到 Release 页面；
+  - 设置页「通用设置」里可以关闭自动检查，或点「立即检查」手动查看结果。
+- **深色模式**
+  - 主题模式：跟随系统 / 强制浅色 / 强制深色；状态栏 / 导航栏图标颜色跟着切换，不会出现深色底配深色图标；
+  - 新增 `values-night` 窗口底色，系统深色模式下启动不再闪白。
+- **主题色 / 莫奈取色**
+  - 6 个预设主题色（雪蓝 / 冰青 / 淡紫 / 樱粉 / 暖橙 / 草绿）+ 自定义 `#RRGGBB`，改动立即生效；
+  - Android 12+ 支持「莫奈取色」（`dynamicLight/DarkColorScheme`），从系统壁纸取色；
+  - 自定义配色由种子色实时生成（不引入第三方取色库），覆盖 primary / secondary / tertiary / surface 系列。
+- **首页搜索**
+  - 右上角新增搜索按钮，按应用名或包名实时过滤；应用名在 IO 线程预加载，输入时不再调用 `loadLabel`。
+- **后台应用优先排序**
+  - 首页把「有存活进程且不在前台」的应用排到最前面，并按进程数从多到少排序，其余应用按白名单 / 名称排序；
+  - 设置里可以关闭这个行为，回到「白名单优先 + 名称」的旧排序。
+- **完整进程列表**
+  - 应用面板的进程列表现在合并 `PackageManager` 里声明的进程（四大组件的 `android:process`）和当前运行中的进程：
+    没启动的子进程也会列出来，可以提前勾选进程规则；运行中的进程显示 pid / 冻结状态，未运行的显示「未运行」；
+  - 设置里可以关闭「显示未运行进程」，只看当前运行的。
+- **白名单应用的部分冻结**
+  - 白名单应用仍然整应用不参与自动冻结、不参与内存回收，但：
+    - 可以手动冻结它的子进程（主进程不允许冻，避免白名单跳过 Binder 临时解冻后应用无响应）；
+    - 把进程规则设为「只冻选中 / 排除选中」后，子进程会按规则自动部分冻结；
+  - 白名单应用的部分冻结**不会**向系统上报「整个 uid 冻结」，也不会断网 / 移除闹钟；
+  - 手动冻结的进程会标记为「已冻结(手动)」，状态文件新增 `manuallyFrozen` 字段。
+
+### 变更
+
+- 应用设置面板的「白名单」说明改为「整应用不冻结、不参与内存回收；仍然可以冻结它的子进程」。
+- 设置页标题改为「设置」，新增「外观 / 主题」和「通用设置」两张卡；页脚版本号改为读取 `BuildConfig`。
+- `AppRecord.isSystem()` 拆分为 `isProtected()`（系统应用 / 输入法 / 内置保护应用）和 `isWhiteListed()`：
+  冻结逻辑只对 `isProtected()` 完全跳过，白名单应用可以做进程级部分冻结。
+- 版本号 1.1.0 → 1.2.0，APK `versionCode=3`，模块 `versionCode=12000`；模块 `module.prop` 新增 `updateJson`，
+  Magisk / KernelSU 的模块更新也可以读到 `update.json`。
+
+### 修复
+
+- **白名单应用完全无法部分冻结**：原来 `isSystem()` 把白名单也算进去，自动冻结 / 手动冻结 / 手动解冻全部跳过；
+  现在白名单只跳过「整应用冻结」，进程级冻结可用，同时保留 `temporaryUnfreezeIfNeed` 的 Binder 唤醒解冻，
+  避免冻住子进程后应用卡死。
+- **白名单应用的自动冻结残留**：`reconcile` 对「白名单 + 全部进程」只解冻自动冻结的进程，保留用户手动冻结的；
+  新增 `ProcessRecord.manuallyFrozen` 区分两种冻结来源。
+- **改完配置不切后台就不生效**（例如刚从白名单移除 / 刚打开自动冻结 / 刚改进程规则）：
+  `reconcile` 检测到「应用已在后台且按规则有该冻的进程」时补发一次冻结调度（每应用 30 秒最多一次），
+  不用等下一次「进入后台」事件。
+- **进程列表只有运行中的进程**：现在从 `PackageManager` 枚举全部已声明进程（含未运行）；
+  运行中的进程还会补进来，防止极端情况下状态文件缺项。
+- **应用面板状态刷新**：进程行按「运行中优先 / 主进程优先 / 名称」排序，手动冻结显示「已冻结(手动)」。
+- 更新检查的版本比较支持 `v` 前缀、缺段补零、后缀忽略（`1.2.0-beta` == `1.2.0`），并新增单元测试。
+- 进程名规范化处理 `android:process=":push"` 这种私有进程写法（补全成 `包名:push`），并新增单元测试。
+
+### 测试
+
+- 新增 `UpdateLogicTest`：版本名比较（v 前缀 / 位数不同 / 后缀）、私有进程名规范化；
+- 原有进程规则 / PSI / 配置校正单元测试全部通过（共 18 个）。
+
 ## v1.1.0 — 2026-10-30
 
 在 v1.0.0 的基础上加「看得见、管得住」的冻结控制：冻结后界面会显示「已冻结」，

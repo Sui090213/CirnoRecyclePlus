@@ -1,8 +1,11 @@
 package nep.timeline.cirno.services;
 
 import android.os.Build;
+import android.os.SystemClock;
 
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import nep.timeline.cirno.configs.checkers.AppConfigs;
 import nep.timeline.cirno.configs.settings.AppOptions;
@@ -25,6 +28,18 @@ public class FreezerService {
      */
     private static final Object LOCK = new Object();
 
+    /** 配置对齐时补发自动冻结调度的最小间隔. */
+    private static final long AUTO_FREEZE_KICK_INTERVAL_MS = 30_000L;
+
+    /**
+     * 推送唤醒后的「免冻结窗口」: packageName -> 截止时间 (elapsedRealtime).
+     *
+     * <p>FCM / 厂商推送广播到达时目标应用可能还没创建进程，此时拿不到 AppRecord 来安排
+     * 重新冻结；用包名记一个窗口，让 ProcessAddHook 3 秒后触发的冻结在窗口内直接跳过，
+     * 窗口结束后再冻结。否则「推送刚拉起进程，3 秒后就被冻住」会表现为收不到推送.
+     */
+    private static final Map<String, Long> FREEZE_HOLD_UNTIL_MS = new ConcurrentHashMap<>();
+
     /**
      * 冻结一个应用 (自动冻结入口, 由 FreezerHandler 在应用退到后台一段时间后调用).
      *
@@ -46,8 +61,15 @@ public class FreezerService {
     }
 
     private static void freezerLocked(AppRecord appRecord) {
-        if (appRecord == null || appRecord.isSystem())
+        if (appRecord == null || appRecord.isProtected())
             return;
+
+        // 推送窗口内不冻结: 重新安排一次「窗口结束后的冻结」.
+        long holdRemaining = freezeHoldRemaining(appRecord.getPackageName());
+        if (holdRemaining > 0) {
+            FreezerHandler.sendFreezeMessageIgnoreMessages(appRecord, holdRemaining + 200);
+            return;
+        }
 
         AppState appState = appRecord.getAppState();
         if (appState == null)
@@ -56,6 +78,11 @@ public class FreezerService {
         AppOptions options = AppConfigs.getOptions(appRecord.getPackageName(), appRecord.getUserId());
         // 应用级总开关: 长按面板里关掉「参与自动冻结」后, 这个应用永远不冻结.
         if (!options.enabled)
+            return;
+
+        // 用户白名单: 默认整应用不参与自动冻结; 只有用户显式选了「只冻选中 / 排除选中」
+        // (processMode != ALL) 才做进程级部分冻结, 而且主进程永远跳过.
+        if (appRecord.isWhiteListed() && options.processMode == AppOptions.PROCESS_MODE_ALL)
             return;
 
         if (appState.isVisible() || appState.isLocation() || appState.isRecording() || appState.isVpn())
@@ -98,13 +125,14 @@ public class FreezerService {
             if (processRecord.isFrozen())
                 continue;
 
-            if (!AppConfigs.shouldFreezeProcess(options, processRecord.getProcessName())) {
+            if (!shouldFreezeProcessLocked(appRecord, options, processRecord.getProcessName())) {
                 allFrozen = false;
                 continue;
             }
 
             if (FrozenRW.frozen(processRecord.getRunningUid(), processRecord.getPid())) {
                 processRecord.setFrozen(true);
+                processRecord.setManuallyFrozen(false);
                 anyFrozen = true;
             } else {
                 allFrozen = false;
@@ -125,6 +153,27 @@ public class FreezerService {
 
         appRecord.setFrozen(true);
         notifyFrozenLocked(appRecord);
+    }
+
+    /**
+     * 判断某个进程是否允许被冻结 (自动 / 手动共用).
+     *
+     * <p>用户白名单应用只允许冻结子进程: 主进程一旦被冻住, 白名单应用会跳过 Binder
+     * 临时解冻逻辑, 应用会直接无响应, 所以主进程永远排除在冻结之外.
+     */
+    public static boolean shouldFreezeProcess(AppRecord appRecord, AppOptions options, String processName) {
+        if (appRecord != null && appRecord.isWhiteListed() && isMainProcess(appRecord, processName))
+            return false;
+        return AppConfigs.shouldFreezeProcess(options, processName);
+    }
+
+    private static boolean shouldFreezeProcessLocked(AppRecord appRecord, AppOptions options, String processName) {
+        return shouldFreezeProcess(appRecord, options, processName);
+    }
+
+    /** 进程名是否等于应用的主进程名 (Android 主进程名就是包名). */
+    public static boolean isMainProcess(AppRecord appRecord, String processName) {
+        return appRecord != null && (processName == null || processName.equals(appRecord.getPackageName()));
     }
 
     /**
@@ -168,20 +217,34 @@ public class FreezerService {
         if (appRecord == null || appRecord.isReportedFrozen())
             return;
 
+        // 白名单应用只做进程级部分冻结, 不上报「整个 uid 冻结」, 也不断网 / 移闹钟:
+        // 它整体仍被用户视为「不冻结」, 上报会让系统按整个应用冻结去调度.
+        // 注意不要把 reportedFrozen 清成 false: 如果它之前 (白名单之前) 真的上报过,
+        // 这里清掉标记会导致以后解冻时不再上报 unfrozen, 系统侧状态会一直错着.
+        if (appRecord.isWhiteListed())
+            return;
+
         AppOptions options = AppConfigs.getOptions(appRecord.getPackageName(), appRecord.getUserId());
         if (!options.keepAlarms)
             Handlers.alarms.post(() -> ForceAppStandbyListener.removeAlarmsForUid(appRecord));
 
-        Handlers.network.post(() -> {
-            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-                CachedAppOptimizer.reportOneUidFrozenStateChanged(appRecord.getUid(), true);
-                return;
-            }
-            // 保留网络连接时跳过 socketDestroy (只对 Android 15 及以下的实现有影响).
-            if (!options.keepNetwork)
+        if (!options.keepNetwork) {
+            Handlers.network.post(() -> {
+                if (Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                    CachedAppOptimizer.reportOneUidFrozenStateChanged(appRecord.getUid(), true);
+                    return;
+                }
                 NetworkManagementService.socketDestroy(appRecord);
-        });
+            });
+        } else {
+            // keepNetwork 打开时:
+            // - Android 15 及以下: 跳过 socketDestroy;
+            // - Android 16+: 不上报 uid frozen, 否则系统的冻结网络策略仍会切断网络,
+            //   「保留网络连接」就形同虚设.
+            Log.d(appRecord.getPackageNameWithUser() + " 保留网络连接");
+        }
 
+        // 仍然记为「已通知系统」, 只用于去重: 避免每 2 秒的配置对齐重复移闹钟 / 重复上报.
         appRecord.setReportedFrozen(true);
     }
 
@@ -240,6 +303,7 @@ public class FreezerService {
 
             FrozenRW.thaw(processRecord.getRunningUid(), processRecord.getPid());
             processRecord.setFrozen(false);
+            processRecord.setManuallyFrozen(false);
             anyThawed = true;
         }
 
@@ -260,6 +324,7 @@ public class FreezerService {
             if (!FrozenRW.frozen(processRecord.getRunningUid(), processRecord.getPid()))
                 return false;
             processRecord.setFrozen(true);
+            processRecord.setManuallyFrozen(true);
             return true;
         }
     }
@@ -271,6 +336,7 @@ public class FreezerService {
                 return false;
             FrozenRW.thaw(processRecord.getRunningUid(), processRecord.getPid());
             processRecord.setFrozen(false);
+            processRecord.setManuallyFrozen(false);
             return true;
         }
     }
@@ -295,45 +361,115 @@ public class FreezerService {
         if (appRecord == null || appRecord.getPackageName() == null)
             return;
 
-        boolean hasFrozenProcess = false;
-        for (ProcessRecord processRecord : appRecord.getProcessRecords()) {
-            if (processRecord != null && !processRecord.isDeathProcess() && processRecord.isFrozen()) {
-                hasFrozenProcess = true;
-                break;
-            }
-        }
-
-        boolean blocked = appRecord.isSystem()
-                || !AppConfigs.isFreezeEnabled(appRecord.getPackageName(), appRecord.getUserId());
-        if (blocked) {
-            if (hasFrozenProcess || appRecord.isFrozen() || appRecord.isReportedFrozen()) {
-                Log.i(appRecord.getPackageNameWithUser() + " 已设置为不冻结 / 白名单, 解冻已冻结进程");
+        // 系统应用 / 输入法 / 内置保护应用: 任何情况下都不允许保留冻结进程.
+        if (appRecord.isProtected()) {
+            if (hasFrozenProcess(appRecord) || appRecord.isFrozen() || appRecord.isReportedFrozen()) {
+                Log.i(appRecord.getPackageNameWithUser() + " 是系统应用 / 内置保护应用, 解冻已冻结进程");
                 thawLocked(appRecord);
             }
             return;
         }
 
-        if (!hasFrozenProcess) {
-            if (appRecord.isFrozen())
-                updateFrozenFlagLocked(appRecord);
+        boolean enabled = AppConfigs.isFreezeEnabled(appRecord.getPackageName(), appRecord.getUserId());
+        if (!enabled) {
+            if (hasFrozenProcess(appRecord) || appRecord.isFrozen() || appRecord.isReportedFrozen()) {
+                Log.i(appRecord.getPackageNameWithUser() + " 已设置为不冻结, 解冻已冻结进程");
+                thawLocked(appRecord);
+            }
             return;
         }
 
         AppOptions options = AppConfigs.getOptions(appRecord.getPackageName(), appRecord.getUserId());
+
+        // 白名单 + 「全部进程」: 整应用不参与自动冻结, 只清理自动冻结的残留,
+        // 保留用户手动冻结的子进程 (否则手动冻结的白名单进程会被每 2 秒的自动对齐解掉).
+        if (appRecord.isWhiteListed() && options.processMode == AppOptions.PROCESS_MODE_ALL) {
+            boolean thawed = false;
+            for (ProcessRecord processRecord : appRecord.getProcessRecords()) {
+                if (processRecord == null || processRecord.isDeathProcess() || !processRecord.isFrozen())
+                    continue;
+                if (processRecord.isManuallyFrozen())
+                    continue;
+                FrozenRW.thaw(processRecord.getRunningUid(), processRecord.getPid());
+                processRecord.setFrozen(false);
+                thawed = true;
+            }
+            if (thawed)
+                Log.i(appRecord.getPackageNameWithUser() + " 是白名单, 解冻自动冻结的进程");
+            syncReportedStateLocked(appRecord);
+            return;
+        }
+
+        if (!hasFrozenProcess(appRecord)) {
+            if (appRecord.isFrozen())
+                updateFrozenFlagLocked(appRecord);
+
+            // 配置从「不冻结 / 白名单 / 规则排除」改成允许冻结时, 应用可能已经在后台了,
+            // 不会再触发一次「进入后台」事件. 这里补一次冻结调度, 让设置即时生效
+            // (30 秒内最多补一次, 避免写 cgroup 失败时每 2 秒重试).
+            if (canAutoFreezeNow(appRecord, options)) {
+                long now = SystemClock.elapsedRealtime();
+                if (now - appRecord.getLastAutoFreezeKickMs() > AUTO_FREEZE_KICK_INTERVAL_MS) {
+                    appRecord.setLastAutoFreezeKickMs(now);
+                    FreezerHandler.sendFreezeMessage(appRecord, 2000);
+                }
+            }
+            return;
+        }
+
         for (ProcessRecord processRecord : appRecord.getProcessRecords()) {
             if (processRecord == null || processRecord.isDeathProcess() || !processRecord.isFrozen())
                 continue;
-            if (AppConfigs.shouldFreezeProcess(options, processRecord.getProcessName()))
+            if (shouldFreezeProcessLocked(appRecord, options, processRecord.getProcessName()))
                 continue;
 
             FrozenRW.thaw(processRecord.getRunningUid(), processRecord.getPid());
             processRecord.setFrozen(false);
+            processRecord.setManuallyFrozen(false);
             Log.i(appRecord.getPackageNameWithUser() + " 进程规则已排除 " + processRecord.getProcessName() + ", 解冻");
         }
 
         // 重新对齐「整应用冻结标记 + 系统上报状态」: 处理进程死亡 / 手动操作导致的
         // 「全冻结但没上报」和「不再全冻结但已上报」两种情况.
         syncReportedStateLocked(appRecord);
+    }
+
+    /** 是否有存活且已冻结的进程. */
+    private static boolean hasFrozenProcess(AppRecord appRecord) {
+        for (ProcessRecord processRecord : appRecord.getProcessRecords()) {
+            if (processRecord != null && !processRecord.isDeathProcess() && processRecord.isFrozen())
+                return true;
+        }
+        return false;
+    }
+
+    /**
+     * 当前是否「值得」补发一次自动冻结调度: 应用在后台, 没有音频 / 定位 / 录音 / VPN 保护,
+     * 且至少有一个进程按规则应该被冻结.
+     */
+    private static boolean canAutoFreezeNow(AppRecord appRecord, AppOptions options) {
+        if (appRecord == null || options == null || !options.enabled)
+            return false;
+        if (appRecord.isProtected())
+            return false;
+        if (appRecord.isWhiteListed() && options.processMode == AppOptions.PROCESS_MODE_ALL)
+            return false;
+
+        AppState appState = appRecord.getAppState();
+        if (appState == null)
+            return false;
+        if (appState.isVisible() || appState.isLocation() || appState.isRecording() || appState.isVpn())
+            return false;
+        if (appState.isAudio() && options.keepAudio)
+            return false;
+
+        for (ProcessRecord processRecord : appRecord.getProcessRecords()) {
+            if (processRecord == null || processRecord.isDeathProcess() || processRecord.isFrozen())
+                continue;
+            if (shouldFreezeProcessLocked(appRecord, options, processRecord.getProcessName()))
+                return true;
+        }
+        return false;
     }
 
     public static void temporaryUnfreezeIfNeed(int uid, String reason, long interval) {
@@ -355,6 +491,87 @@ public class FreezerService {
     }
 
     /**
+     * 推送到达时按包名解冻.
+     *
+     * <p>为什么不按 userId: OEM 的广播方法参数布局经常变, 按包名找所有用户的 AppRecord 更稳;
+     * 推送目标应用通常只有一个用户. 找不到 AppRecord (进程还没创建) 时仍记录免冻结窗口,
+     * 让随后 ProcessAdd 触发的冻结被挡住.
+     */
+    public static void temporaryUnfreezeIfNeedByPackage(String packageName, String reason, long interval) {
+        if (packageName == null || packageName.isEmpty())
+            return;
+
+        boolean matched = false;
+        boolean held = false;
+        List<AppRecord> appRecords = AppService.getAll();
+        for (AppRecord appRecord : appRecords) {
+            if (appRecord == null || !packageName.equals(appRecord.getPackageName()))
+                continue;
+            matched = true;
+            // 系统应用 / 内置保护应用不会冻结, 不需要推送窗口.
+            if (appRecord.isProtected())
+                continue;
+            if (!AppConfigs.isFreezeEnabled(packageName, appRecord.getUserId()))
+                continue;
+            if (!AppConfigs.getOptions(packageName, appRecord.getUserId()).wakeOnPush)
+                continue;
+            held = true;
+            temporaryUnfreezeIfNeed(appRecord, reason, interval);
+        }
+
+        if (!matched || held)
+            holdFreezeForPackage(packageName, interval);
+    }
+
+    /** 记录包名的「推送免冻结窗口」. */
+    public static void holdFreezeForPackage(String packageName, long durationMs) {
+        if (packageName == null || packageName.isEmpty())
+            return;
+        long until = SystemClock.elapsedRealtime() + Math.max(1000L, durationMs);
+        FREEZE_HOLD_UNTIL_MS.put(packageName, until);
+    }
+
+    /**
+     * 服务启动 / 绑定前解冻: 只处理当前确实被冻结的应用.
+     *
+     * <p>服务启动非常频繁, 如果对每个启动都排一次冻结消息会拖慢 Freezer 线程;
+     * 只有「已经冻结」的应用才需要先解冻, 未冻结的应用本来就能正常启动服务.
+     */
+    public static void temporaryUnfreezeIfFrozenByPackage(String packageName, String reason, long interval) {
+        if (packageName == null || packageName.isEmpty())
+            return;
+
+        boolean held = false;
+        List<AppRecord> appRecords = AppService.getAll();
+        for (AppRecord appRecord : appRecords) {
+            if (appRecord == null || !packageName.equals(appRecord.getPackageName()))
+                continue;
+            if (appRecord.isProtected() || !appRecord.isFrozen())
+                continue;
+            temporaryUnfreezeIfNeed(appRecord, reason, interval);
+            held = true;
+        }
+
+        if (held)
+            holdFreezeForPackage(packageName, interval);
+    }
+
+    /** 距推送免冻结窗口结束还剩多少毫秒; 0 表示没有窗口 / 已过期. */
+    private static long freezeHoldRemaining(String packageName) {
+        if (packageName == null || packageName.isEmpty())
+            return 0L;
+        Long until = FREEZE_HOLD_UNTIL_MS.get(packageName);
+        if (until == null)
+            return 0L;
+        long remaining = until - SystemClock.elapsedRealtime();
+        if (remaining <= 0L) {
+            FREEZE_HOLD_UNTIL_MS.remove(packageName);
+            return 0L;
+        }
+        return remaining;
+    }
+
+    /**
      * 应用被外部事件 (Binder / 广播 / 媒体按键等) 唤醒时的临时解冻.
      *
      * <p>关键点: **解冻这一步永远要做**, 只有「解冻后再重新安排冻结」受应用选项控制.
@@ -362,7 +579,16 @@ public class FreezerService {
      * 在依赖 Binder 解冻的 ROM (小米 Greeze / OPlus Hans / ReKernel) 上会表现为打不开 / ANR.
      */
     public static void temporaryUnfreezeIfNeed(AppRecord appRecord, String reason, long interval) {
-        if (appRecord == null || appRecord.isSystem())
+        if (appRecord == null || appRecord.isProtected())
+            return;
+
+        // 白名单 + 「全部进程」的白名单应用如果当前没有被冻结的进程, 就不需要走
+        // 「解冻 + 重新安排冻结」: 这类应用不会自动冻结, 而默认白名单里的微信等 Binder
+        // 事件非常频繁, 全进 Freezer 队列没有意义. 「只冻选中 / 排除选中」模式仍然走完整流程,
+        // 这样才能在每次唤醒后把计时器重置, 不会在应用还在处理消息时就冻住子进程.
+        if (appRecord.isWhiteListed()
+                && AppConfigs.getOptions(appRecord.getPackageName(), appRecord.getUserId()).processMode == AppOptions.PROCESS_MODE_ALL
+                && !hasFrozenProcess(appRecord))
             return;
 
         synchronized (LOCK) {

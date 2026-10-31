@@ -27,6 +27,14 @@ public class ProcessRecord {
      */
     @Setter
     private volatile boolean frozen;
+    /**
+     * 是否是通过「手动冻结」冻上的 (而不是自动冻结).
+     *
+     * <p>白名单应用整应用不参与自动冻结, 但用户手动冻掉的子进程要保留;
+     * reconcile 清理白名单应用里「自动冻结」残留时靠这个标记区分, 不能把手动冻结的也解掉.
+     */
+    @Setter
+    private volatile boolean manuallyFrozen;
     /** 进程启动时间缓存: -2 表示还没读过; 同一个进程生命周期内不会变, 读一次就够. */
     @Getter(AccessLevel.NONE)
     private volatile long startTimeCache = -2L;

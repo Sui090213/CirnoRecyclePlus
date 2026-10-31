@@ -1,6 +1,8 @@
 {
-  "version": "v1.1.0",
-  "versionCode": 11000,
-  "zipUrl": "https://github.com/Sui090213/CirnoRecyclePlus/releases/download/v1.1.0/Cirno-Recycle-Plus-v1.1.0.zip",
+  "version": "v1.2.1",
+  "versionCode": 12001,
+  "zipUrl": "https://github.com/Sui090213/CirnoRecyclePlus/releases/download/v1.2.1/Cirno-Recycle-Plus-v1.2.1.zip",
+  "apkUrl": "https://github.com/Sui090213/CirnoRecyclePlus/releases/download/v1.2.1/Cirno-Recycle-Plus-v1.2.1.apk",
+  "releaseUrl": "https://github.com/Sui090213/CirnoRecyclePlus/releases/tag/v1.2.1",
   "changelog": "https://raw.githubusercontent.com/Sui090213/CirnoRecyclePlus/main/CHANGELOG.md"
 }

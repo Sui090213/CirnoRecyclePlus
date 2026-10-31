@@ -18,6 +18,7 @@ data class AppOptionsValue(
     val keepNetwork: Boolean = false,
     val keepAlarms: Boolean = false,
     val allowReclaim: Boolean = true,
+    val wakeOnPush: Boolean = true,
     val processMode: Int = AppOptions.PROCESS_MODE_ALL,
     val selected: Set<String> = emptySet(),
 )
@@ -59,6 +60,7 @@ object AppOptionsStore {
                 keepNetwork = options.keepNetwork,
                 keepAlarms = options.keepAlarms,
                 allowReclaim = options.allowReclaim,
+                wakeOnPush = options.wakeOnPush,
                 processMode = options.processMode,
                 selected = options.selected().toSet(),
             )

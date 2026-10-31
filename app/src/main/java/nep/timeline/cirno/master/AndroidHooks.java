@@ -6,6 +6,7 @@ import android.os.FileObserver;
 import nep.timeline.cirno.configs.ConfigFileObserver;
 import nep.timeline.cirno.hooks.android.activity.ActivityManagerServiceHook;
 import nep.timeline.cirno.hooks.android.activity.ActivityStatsHook;
+import nep.timeline.cirno.hooks.android.activity.ServiceStartHook;
 import nep.timeline.cirno.hooks.android.alarms.AlarmManagerService;
 import nep.timeline.cirno.hooks.android.anr.ANRErrorStateHook;
 import nep.timeline.cirno.hooks.android.anr.ANRHelperHooks;
@@ -77,6 +78,8 @@ public class AndroidHooks {
         // Activity
         new ActivityManagerServiceHook(classLoader);
         new ActivityStatsHook(classLoader);
+        // 服务启动 / 绑定唤醒 (推送 service / 后台任务)
+        new ServiceStartHook(classLoader);
         // Process
         new ProcessAddHook(classLoader);
         new ProcessRemoveHook(classLoader);

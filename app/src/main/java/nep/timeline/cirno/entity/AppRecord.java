@@ -34,6 +34,13 @@ public class AppRecord {
     private volatile boolean reportedFrozen;
     private final List<ProcessRecord> processRecords = new CopyOnWriteArrayList<>();
 
+    /**
+     * 上一次由「配置对齐」补发自动冻结调度的时间 (elapsedRealtime).
+     *
+     * <p>用于限流: 进程写 cgroup 失败 / 规则选中的进程还没启动时, 避免每 2 秒都重试一次.
+     */
+    private volatile long lastAutoFreezeKickMs;
+
     public AppRecord(ApplicationInfo applicationInfo) {
         this.packageName = applicationInfo.packageName;
         this.userId = PKGUtils.getUserId(applicationInfo.uid);
@@ -42,8 +49,29 @@ public class AppRecord {
         this.appState = new AppState(this);
     }
 
+    /**
+     * 系统应用 / 输入法 / 内置保护应用: 任何情况下都不冻结, 也不允许手动冻结.
+     *
+     * <p>这些应用一旦被冻住, 整机 UI / 输入法 / 框架服务会直接不可用, 没有安全的唤醒路径.
+     */
+    public boolean isProtected() {
+        return packageName == null || equals(InputMethodData.currentInputMethodApp) || PKGUtils.isSystemApp(applicationInfo) || CommonConstants.isWhitelistApps(packageName);
+    }
+
+    /**
+     * 用户自己加的白名单应用.
+     *
+     * <p>语义: 整应用不参与自动冻结 / 内存回收, 但允许按进程规则或手动做「部分冻结」
+     * (主进程永远不冻结, 见 {@code FreezerService.shouldFreezeProcess}). 这样用户既可以
+     * 让应用整体不被冻死, 又可以单独冻掉它那些占内存又不需要常驻的子进程.
+     */
+    public boolean isWhiteListed() {
+        return AppConfigs.isWhiteApp(packageName, userId);
+    }
+
+    /** 旧代码用的「完全不处理」判断, 保持原有语义 (系统应用 / 内置保护 / 用户白名单). */
     public boolean isSystem() {
-        return packageName == null || equals(InputMethodData.currentInputMethodApp) || PKGUtils.isSystemApp(applicationInfo) || AppConfigs.isWhiteApp(packageName, userId) || CommonConstants.isWhitelistApps(packageName);
+        return isProtected() || isWhiteListed();
     }
 
     public String getPackageNameWithUser() {

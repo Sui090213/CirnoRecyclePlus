@@ -1,11 +1,14 @@
 package nep.timeline.cirno.hooks.android.broadcast;
 
+import android.content.Intent;
 import android.os.Build;
 
 import nep.timeline.cirno.framework.MethodHook;
 import nep.timeline.cirno.reflect.CakeHooker;
 import nep.timeline.cirno.reflect.CakeReflection;
+import nep.timeline.cirno.services.FreezerService;
 import nep.timeline.cirno.services.ProcessService;
+import nep.timeline.cirno.utils.PushUtils;
 import nep.timeline.cirno.utils.SystemChecker;
 import nep.timeline.cirno.virtuals.BroadcastRecord;
 import nep.timeline.cirno.virtuals.ProcessRecord;
@@ -41,6 +44,22 @@ public class BroadcastDeliveryHook extends MethodHook {
                 Object record = callback.getArgs()[0];
                 if (record == null)
                     return;
+
+                // 推送广播永远不能跳过: 先解冻目标应用, 再让系统正常投递.
+                try {
+                    Object intentField = CakeReflection.getObjectField(record, "intent");
+                    if (intentField instanceof Intent) {
+                        Intent intent = (Intent) intentField;
+                        if (PushUtils.isPushAction(intent.getAction())) {
+                            String packageName = PushUtils.packageOf(intent);
+                            if (packageName != null)
+                                FreezerService.temporaryUnfreezeIfNeedByPackage(packageName, "MESSAGE PUSH", PushUtils.PUSH_HOLD_MS);
+                            return;
+                        }
+                    }
+                } catch (Throwable ignored) {
+                    // 字段不存在时继续走原来的跳过逻辑.
+                }
 
                 BroadcastRecord broadcastRecord = new BroadcastRecord(record);
 

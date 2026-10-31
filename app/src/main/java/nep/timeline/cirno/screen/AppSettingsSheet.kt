@@ -44,10 +44,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import nep.timeline.cirno.client.AppOptionsStore
 import nep.timeline.cirno.client.AppOptionsValue
+import nep.timeline.cirno.client.AppPrefs
+import nep.timeline.cirno.client.ProcessCatalog
 import nep.timeline.cirno.client.RuntimeClient
 import nep.timeline.cirno.configs.settings.AppOptions
 import nep.timeline.cirno.runtime.AppRuntimeState
-import nep.timeline.cirno.runtime.ProcessRuntimeState
 import nep.timeline.cirno.runtime.RuntimeAction
 import nep.timeline.cirno.runtime.RuntimeState
 import java.util.LinkedHashSet
@@ -73,6 +74,7 @@ private fun AppOptionsValue.applyTo(options: AppOptions) {
     options.keepNetwork = keepNetwork
     options.keepAlarms = keepAlarms
     options.allowReclaim = allowReclaim
+    options.wakeOnPush = wakeOnPush
     options.processMode = processMode
     options.selectedProcesses = LinkedHashSet(selected)
 }
@@ -369,8 +371,14 @@ fun AppSettingsContent(
                 onCheckedChange = { value -> update { it.copy(allowReclaim = value) } }
             )
             AppSwitchRow(
+                title = "收到推送时解冻",
+                subtitle = "收到 FCM / 厂商推送广播时先解冻这个应用 15 秒处理消息，之后再冻结",
+                checked = current.wakeOnPush,
+                onCheckedChange = { value -> update { it.copy(wakeOnPush = value) } }
+            )
+            AppSwitchRow(
                 title = "白名单",
-                subtitle = "完全不冻结、也不参与内存回收 (和上面的选项独立, 优先级最高)",
+                subtitle = "整应用不冻结、不参与内存回收; 仍然可以冻结它的子进程 (主进程不会被冻)",
                 checked = white,
                 onCheckedChange = { value ->
                     if (writesLocked) {
@@ -395,12 +403,32 @@ fun AppSettingsContent(
         // ------------------------------------------------------------------
         val appState = RuntimeClient.findApp(runtime, packageName, userId)
 
+        // 进程列表 = 「PackageManager 里声明的进程」∪「当前活着的进程」:
+        // 用户经常需要给一个还没启动的子进程 (例如微信 :push) 预先设规则, 只列运行中的进程不够用.
+        val packageManager = context.packageManager
+        val declaredProcesses = remember(packageName) {
+            runCatching { ProcessCatalog.declaredProcesses(packageManager, packageName) }
+                .getOrDefault(listOf(packageName))
+        }
+        val showInactive = AppPrefs.showInactiveProcesses
+        val processRows = remember(appState, declaredProcesses, showInactive) {
+            buildProcessRows(appState, declaredProcesses, showInactive, packageName)
+        }
+
         AppSectionCard("自定义进程冻结") {
             Text(
                 text = "自动冻结这个应用时冻结哪些进程. 手动冻结 / 解冻在下面的进程列表里点.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (white) {
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    text = "白名单应用: 整应用不参与自动冻结, 主进程不允许冻结; 可以手动冻结子进程, 也可以把规则改成「只冻选中 / 排除选中」, 让子进程按规则自动部分冻结.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF4CAF50)
+                )
+            }
             Spacer(Modifier.size(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
@@ -434,7 +462,7 @@ fun AppSettingsContent(
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "进程列表",
+                    text = if (showInactive) "进程列表（含未运行）" else "进程列表（仅运行中）",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
@@ -449,49 +477,67 @@ fun AppSettingsContent(
                     Text("刷新")
                 }
             }
+            Text(
+                text = if (showInactive) {
+                    "列出应用声明的全部进程; 没运行的进程也能勾选规则, 等它启动后按规则冻结."
+                } else {
+                    "只显示当前运行的进程. 可以在设置页打开「显示未运行进程」."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
-            if (appState == null) {
+            if (runtime == null) {
+                Spacer(Modifier.size(4.dp))
                 Text(
-                    text = if (runtime == null) "状态未知 (模块没有在运行)" else "当前没有运行中的进程",
+                    text = "读取不到运行状态 (模块没有在运行), 下面只显示已声明的进程, 无法手动冻结.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(Modifier.size(6.dp))
+            if (processRows.isEmpty()) {
+                Text(
+                    text = "没有可显示的进程",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
-                // 状态文件可能被手改 / 损坏, processes 理论上不会为 null, 这里做一次兜底.
-                val processes = appState.processes ?: emptyList()
-                if (processes.isEmpty()) {
-                    Text(
-                        text = "当前没有运行中的进程",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    processes.forEach { process ->
+                    processRows.forEach { row ->
                         AppProcessRow(
                             packageName = packageName,
-                            process = process,
-                            selected = process.name?.let { current.selected.contains(it) } ?: false,
-                            canFreeze = !appState.visible,
+                            row = row,
+                            selected = current.selected.contains(row.name),
+                            canManualFreeze = row.running && appState?.visible != true,
+                            isWhiteApp = white,
                             onSelectedChange = { checked ->
-                                val processName = process.name
-                                if (processName != null) {
-                                    update {
-                                        val set = if (checked) it.selected + processName else it.selected - processName
-                                        it.copy(selected = set)
-                                    }
+                                update {
+                                    val set = if (checked) it.selected + row.name else it.selected - row.name
+                                    it.copy(selected = set)
                                 }
                             },
                             onFreeze = {
-                                sendAction(RuntimeAction.TYPE_FREEZE_PID, process.pid, process.startTime)
+                                if (row.running)
+                                    sendAction(
+                                        RuntimeAction.TYPE_FREEZE_PID,
+                                        row.pid,
+                                        startTimeOf(appState, row.name)
+                                    )
                             },
                             onThaw = {
-                                sendAction(RuntimeAction.TYPE_THAW_PID, process.pid, process.startTime)
+                                if (row.running)
+                                    sendAction(
+                                        RuntimeAction.TYPE_THAW_PID,
+                                        row.pid,
+                                        startTimeOf(appState, row.name)
+                                    )
                             }
                         )
                     }
                 }
-                if (appState.visible) {
+                if (appState?.visible == true) {
                     Spacer(Modifier.size(4.dp))
                     Text(
                         text = "应用正在前台, 手动冻结已禁用 (避免卡住当前界面).",
@@ -506,7 +552,7 @@ fun AppSettingsContent(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(
                     onClick = { sendAction(RuntimeAction.TYPE_FREEZE_APP) },
-                    enabled = appState != null && !appState.visible
+                    enabled = appState != null && !appState.visible && !white
                 ) {
                     Text("冻结整个应用")
                 }
@@ -516,6 +562,13 @@ fun AppSettingsContent(
                 ) {
                     Text("解冻整个应用")
                 }
+            }
+            if (white) {
+                Text(
+                    text = "白名单应用不能冻结整个应用: 请用上面的进程规则或单个进程的「冻结」按钮.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             Text(
                 text = "手动操作会立刻生效, 但系统有 Binder / 广播等唤醒时仍可能自动解冻再重新冻结, 属于正常现象.",
@@ -541,42 +594,122 @@ private fun AppStatusLine(appState: AppRuntimeState?, moduleAlive: Boolean) {
     Text(text = text, style = MaterialTheme.typography.bodyMedium, color = color)
 }
 
+/** 进程列表里的一行: 已声明但没运行的进程和正在运行的进程统一成一种数据结构. */
+private data class ProcessRowUi(
+    val name: String,
+    val pid: Int,
+    val frozen: Boolean,
+    val manuallyFrozen: Boolean,
+    val running: Boolean,
+)
+
+/**
+ * 合并「已声明进程」和「运行中进程」.
+ *
+ * <p>运行中的进程优先显示, 主进程优先, 其余按名字排序; 打开「显示未运行进程」时
+ * 把声明了但当前没启动的进程也列出来 (可以提前配置进程规则).
+ */
+private fun buildProcessRows(
+    appState: AppRuntimeState?,
+    declared: List<String>,
+    showInactive: Boolean,
+    packageName: String,
+): List<ProcessRowUi> {
+    val running = appState?.processes.orEmpty()
+    val runningByName = running.mapNotNull { process ->
+        process.name?.let { it to process }
+    }.toMap()
+
+    val names = LinkedHashSet<String>()
+    names.addAll(declared)
+    names.addAll(runningByName.keys)
+
+    return names
+        .filter { showInactive || runningByName.containsKey(it) }
+        .map { name ->
+            val process = runningByName[name]
+            ProcessRowUi(
+                name = name,
+                pid = process?.pid ?: 0,
+                frozen = process?.frozen == true,
+                manuallyFrozen = process?.manuallyFrozen == true,
+                running = process != null
+            )
+        }
+        .sortedWith(
+            compareByDescending<ProcessRowUi> { it.running }
+                .thenBy { it.name != packageName }
+                .thenBy { it.name }
+        )
+}
+
+/** 手动冻结 / 解冻时取进程启动时间 (校验 pid 没被复用). */
+private fun startTimeOf(appState: AppRuntimeState?, processName: String): Long =
+    appState?.processes?.firstOrNull { it.name == processName }?.startTime ?: -1L
+
 @Composable
 private fun AppProcessRow(
     packageName: String,
-    process: ProcessRuntimeState,
+    row: ProcessRowUi,
     selected: Boolean,
-    canFreeze: Boolean,
+    canManualFreeze: Boolean,
+    isWhiteApp: Boolean,
     onSelectedChange: (Boolean) -> Unit,
     onFreeze: () -> Unit,
     onThaw: () -> Unit
 ) {
-    // 进程名理论上不会为空, 但它是从 system_server 反射出来的字符串, 做一次兜底更稳.
-    val displayName = process.name?.takeIf { it.isNotBlank() } ?: "(未知进程)"
+    val displayName = row.name.takeIf { it.isNotBlank() } ?: "(未知进程)"
+    val isMainProcess = row.name == packageName
+    // 白名单应用的主进程永远不会被冻结, 勾选它没有意义, 直接禁用.
+    val selectable = !(isWhiteApp && isMainProcess)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Checkbox(checked = selected, onCheckedChange = onSelectedChange)
+        Checkbox(checked = selected, onCheckedChange = onSelectedChange, enabled = selectable)
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = if (displayName == packageName) "主进程" else displayName,
+                text = if (isMainProcess) "主进程" else displayName,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            val detail = buildString {
+                if (row.running) {
+                    append("pid ")
+                    append(row.pid)
+                    if (row.frozen)
+                        append(if (row.manuallyFrozen) " · 已冻结(手动)" else " · 已冻结")
+                } else {
+                    append("未运行")
+                }
+            }
             Text(
-                text = "pid ${process.pid}" + (if (process.frozen) " · 已冻结" else ""),
+                text = detail,
                 style = MaterialTheme.typography.labelSmall,
-                color = if (process.frozen) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+                color = when {
+                    row.frozen -> Color(0xFF4CAF50)
+                    !row.running -> MaterialTheme.colorScheme.onSurfaceVariant
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
+            if (isWhiteApp && isMainProcess) {
+                Text(
+                    text = "白名单应用的主进程不会被冻结",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
-        if (process.frozen) {
-            TextButton(onClick = onThaw) { Text("解冻") }
-        } else {
-            TextButton(onClick = onFreeze, enabled = canFreeze) { Text("冻结") }
+        if (row.running) {
+            if (row.frozen) {
+                TextButton(onClick = onThaw) { Text("解冻") }
+            } else {
+                TextButton(onClick = onFreeze, enabled = canManualFreeze) { Text("冻结") }
+            }
         }
     }
 }

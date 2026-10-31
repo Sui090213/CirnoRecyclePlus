@@ -9,6 +9,9 @@ import java.util.Set;
  * <p>这些字段会被 Gson 序列化到 {@code /data/misc/CirnoRecycle/ApplicationSettings.json}
  * 的 {@code appOptions} 字段里 (key 是 {@code packageName#userId}).
  * 新增字段必须给合理默认值, 否则旧配置文件反序列化后是 0 / null, 行为会变得很奇怪.
+ *
+ * <p>白名单应用: 整应用不参与自动冻结, 但如果 {@link #processMode} 是「只冻选中 / 排除选中」,
+ * 子进程仍会按规则部分冻结 (主进程永远保留), 详见 FreezerService.
  */
 public class AppOptions {
     /** 自动冻结时冻结应用的全部进程. */
@@ -37,6 +40,14 @@ public class AppOptions {
 
     /** 是否允许内存回收模块回收这个应用的 cgroup 内存. */
     public boolean allowReclaim = true;
+
+    /**
+     * 收到推送 (FCM / 厂商推送广播) 时是否临时解冻.
+     *
+     * <p>默认开启: 冻结中的应用收到推送广播时先解冻 15 秒处理消息 / 拉取正文, 之后重新冻结.
+     * 关掉后广播仍会投递, 但不会额外解冻, 消息可能要等打开应用才处理.
+     */
+    public boolean wakeOnPush = true;
 
     /** 自动冻结时冻结哪些进程: 全部 / 只冻结选中 / 排除选中. */
     public int processMode = PROCESS_MODE_ALL;
