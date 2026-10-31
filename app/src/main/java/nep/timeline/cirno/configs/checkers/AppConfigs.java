@@ -1,5 +1,6 @@
 package nep.timeline.cirno.configs.checkers;
 
+import nep.timeline.cirno.CommonConstants;
 import nep.timeline.cirno.GlobalVars;
 import nep.timeline.cirno.configs.settings.AppOptions;
 import nep.timeline.cirno.configs.settings.ApplicationSettings;
@@ -49,6 +50,18 @@ public class AppConfigs {
     /** 应用是否允许自动冻结. */
     public static boolean isFreezeEnabled(String pkg, int userId) {
         return getOptions(pkg, userId).enabled;
+    }
+
+    /**
+     * Google 服务是否被用户显式允许冻结.
+     *
+     * <p>默认返回 false: GMS / GSF / Play 商店等仍然受保护, 不会破坏 FCM.
+     * 只对 {@link CommonConstants#isGoogleFamily(String)} 里的包生效, 其他应用一律 false.
+     */
+    public static boolean isGoogleFreezeAllowed(String pkg, int userId) {
+        if (pkg == null || !CommonConstants.isGoogleFamily(pkg))
+            return false;
+        return getOptions(pkg, userId).allowFreezeGoogle;
     }
 
     /** 应用是否允许被内存回收模块回收. */

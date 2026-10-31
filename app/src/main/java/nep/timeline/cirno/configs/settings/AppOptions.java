@@ -49,6 +49,17 @@ public class AppOptions {
      */
     public boolean wakeOnPush = true;
 
+    /**
+     * Google 服务专用: 是否允许冻结这个应用.
+     *
+     * <p>GMS / GSF / Play 商店等默认受保护, 防止冻结后 FCM 推送收不到; 不使用 FCM
+     * (或使用其他推送通道) 的用户可以在应用面板里显式打开. 没有打开时,
+     * {@code AppRecord.isProtected()} 仍然会把这些应用当成受保护应用.
+     *
+     * <p>默认 false, 旧配置文件里没有这个字段时反序列化也是 false, 保持 FCM 安全行为.
+     */
+    public boolean allowFreezeGoogle = false;
+
     /** 自动冻结时冻结哪些进程: 全部 / 只冻结选中 / 排除选中. */
     public int processMode = PROCESS_MODE_ALL;
 

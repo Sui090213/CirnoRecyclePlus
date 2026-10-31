@@ -1,0 +1,1 @@
+v1.2.2: fixes the v1.2.1 crash caused by a duplicate element in the whitelist Set.of; Google services stay FCM-protected by default, and users who do not use FCM can allow freezing each Google app from the app list; hook callbacks now swallow exceptions.

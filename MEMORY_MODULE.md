@@ -207,12 +207,14 @@ adb shell 'for f in /sys/fs/cgroup/*/uid_*/pid_*/cgroup.freeze; do [ "$(cat $f)"
 | `keepAlarms` | `false` | 冻结时保留闹钟（跳过 `ForceAppStandbyListener.removeAlarmsForUid`） |
 | `allowReclaim` | `true` | 允许内存回收模块回收这个应用 |
 | `wakeOnPush` | `true` | 收到 FCM / 厂商推送广播时临时解冻 15 秒（v1.2.1） |
+| `allowFreezeGoogle` | `false` | Google 服务专用：打开后才解除保护、允许自动 / 手动冻结（v1.2.2） |
 | `processMode` | `0` | `0` 冻结全部进程 / `1` 只冻结 `selectedProcesses` / `2` 排除 `selectedProcesses` |
 | `selectedProcesses` | `[]` | 进程规则用到的进程名集合 |
 
 `FreezerService.freezer()` 的流程因此变成：
 
-1. 应用 `isProtected()`（系统应用 / 输入法 / 内置保护应用）→ 跳过；
+1. 应用 `isProtected()`（系统应用 / 输入法 / 内置保护应用）→ 跳过；Google 全家桶默认也走保护，
+   只有用户在应用面板里显式打开 `allowFreezeGoogle` 后才不再跳过；
 2. `enabled == false` → 跳过；
 3. 用户白名单 + `processMode == 0`（全部进程）→ 跳过（整应用不参与自动冻结）；
 4. 可见 / 定位 / 录音 / VPN → 跳过；音频且 `keepAudio` → 跳过；
@@ -308,7 +310,7 @@ adb shell su -c 'grep -o "lastActionMessage[^,]*" /data/misc/CirnoRecycle/Runtim
 - 以上偏好存在 App 本地 `SharedPreferences`（`client/AppPrefs.kt`），和 `GlobalSettings.json` /
   `ApplicationSettings.json` 完全独立。
 
-## 16. 推送 / 网络唤醒（v1.2.1）
+## 16. 推送 / 网络唤醒（v1.2.1 / v1.2.2）
 
 FCM 的链路是：应用服务器 → Google FCM → GMS 长连接 → `com.google.android.c2dm.intent.RECEIVE`
 广播 → 目标应用。模块要保证这条链路不被「冻结」破坏：
@@ -317,6 +319,15 @@ FCM 的链路是：应用服务器 → Google FCM → GMS 长连接 → `com.goo
    `com.google.android.gsf`、`com.android.vending`、`com.google.android.configupdater`、
    `com.google.android.ext.services`、`com.google.android.ext.shared` 和 MicroG 相关包。
    无论这些包是不是系统应用，都不参与冻结 / 回收。
+   - v1.2.2 起这些应用仍然默认受保护，但会显示在首页列表里（名字前带 `(Google 保护)`）。
+     不使用 FCM 的用户可以逐个打开 `AppOptions.allowFreezeGoogle` 解除保护；打开该开关时
+     会同时打开 `enabled`（参与自动冻结），关闭时会恢复保护并解冻。
+   - `CommonConstants` 的白名单/Google 集合已从 `Set.of(...)` 改为
+     `LinkedHashSet` + `Collections.unmodifiableSet`：`Set.of` 遇到重复元素会在类初始化阶段抛
+     `IllegalArgumentException`（v1.2.1 的闪退就是 `app.revanced.android.gms` 重复了一次），
+     新写法会自动去重，不会再因此崩进程。
+   - `ServiceStartHook` / `BroadcastIntentHook` / `BroadcastSkipHook` 的回调都包了
+     `try/catch (Throwable)`，Hook 内部异常不会再抛回 system_server。
 2. **广播意图先解冻**（`BroadcastIntentHook`）：
    - 遍历广播参数按类型找 `Intent`，不再依赖硬编码下标（OEM 改参数布局时旧实现会失效）；
    - 同时兜底 hook `ActivityManagerService.broadcastIntentWithFeature` / `broadcastIntent` /

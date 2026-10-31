@@ -19,6 +19,7 @@ data class AppOptionsValue(
     val keepAlarms: Boolean = false,
     val allowReclaim: Boolean = true,
     val wakeOnPush: Boolean = true,
+    val allowFreezeGoogle: Boolean = false,
     val processMode: Int = AppOptions.PROCESS_MODE_ALL,
     val selected: Set<String> = emptySet(),
 )
@@ -61,6 +62,7 @@ object AppOptionsStore {
                 keepAlarms = options.keepAlarms,
                 allowReclaim = options.allowReclaim,
                 wakeOnPush = options.wakeOnPush,
+                allowFreezeGoogle = options.allowFreezeGoogle,
                 processMode = options.processMode,
                 selected = options.selected().toSet(),
             )

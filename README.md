@@ -6,7 +6,7 @@
 # Cirno Recycle+
 
 > 基于 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)（原 [Nep-Timeline/Cirno](https://github.com/Nep-Timeline/Cirno)）**二次修改**
-> 作者：**flyingr** · 版本：**1.2.1** · 协议：**GPL-3.0**
+> 作者：**flyingr** · 版本：**1.2.2** · 协议：**GPL-3.0**
 
 **先说明：这是二改，不是原作者的作品。** 原项目「Cirno」的版权归 Nep-Timeline / Freezer-Team 所有，本仓库只是在其基础上加了内存回收和前台内存压制功能，并保持同样的 GPL-3.0 开源协议。
 
@@ -53,6 +53,7 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 | 23 | **白名单可部分冻结** | 白名单应用仍然整应用不冻结 / 不回收，但可以手动冻结子进程，或把规则设成「只冻选中 / 排除选中」让子进程自动部分冻结；主进程永远不会被冻 | ✅ |
 | 24 | **FCM / 推送保护** | GMS、GSF、Play 商店等推送基础设施默认不冻结；推送广播到达时先解冻目标应用，并给 15 秒投递窗口；推送广播永不被「冻结进程跳过广播」拦掉 | ✅（单应用「收到推送时解冻」） |
 | 25 | **服务启动唤醒** | 冻结应用被 `startService` / `bindService` 拉起（部分 FCM 版本 / 厂商推送 / 后台任务）时，先解冻 15 秒让服务正常启动 | — |
+| 26 | **Google 全家桶可单独选择冻结** | 默认仍保护 GMS / GSF / Play 商店以免切断 FCM；不使用 FCM 时，可在应用列表里逐个打开「允许冻结 Google 服务」，再决定是否自动冻结 | ✅（单应用开关） |
 | 26 | **保留网络连接（Android 16 修复）** | 打开应用的「冻结时保留网络连接」后，Android 16 上也不再上报 frozen 状态、不再切断网络 | ✅（单应用开关） |
 
 > 关于「GitHub 上能压制前台进程内存的模块」：我确实去找了。结论是**没有找到现成的、公开的、专门做 top-app `memory.high` 的 Magisk / LSPosed 模块**（GitHub 搜 `memory.high` 基本都是无关项目）。所以第 6、7、8 项是照着 AOSP 文档和几个内存优化项目的思路自己写的实现，不是直接搬的代码。没有引入 `process_madvise` JNI、没有改 lmkd 参数、没有改 zram 配置——这些要么需要 root shell / `CAP_SYS_NICE`，要么容易把设备调崩，不适合放进 LSPosed 模块里，所以没做。
@@ -67,7 +68,7 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 
 **步骤**
 
-1. 从 Release 页面下载 `Cirno-Recycle-Plus-v1.2.1.zip`。
+1. 从 Release 页面下载 `Cirno-Recycle-Plus-v1.2.2.zip`。
 2. 在 Magisk / KernelSU / APatch 里刷入（**建议在已开机的系统里刷**，这样刷入时就能自动装 APK；recovery 刷入也能用，只是 APK 要等开机后由 `service.sh` 自动补装）：
    - 刷入时会**自动安装配套 APK**（`com.flyingr.cirnorecycle`），并创建配置目录 `/data/misc/CirnoRecycle`；
    - 如果安装时 PackageManager 还没就绪、导致 APK 安装失败，模块会在**下次开机后自动补装一次**。
@@ -146,9 +147,10 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 
 **首页长按应用**（或者点一下应用进详情页）会打开这个应用的独立面板：
 
-- **冻结选项**：参与自动冻结 / 后台播放音频时不冻结 / 冻结时保留网络连接 / 冻结时保留闹钟 / 允许内存回收 / **收到推送时解冻** / 白名单；
+- **冻结选项**：参与自动冻结 / 后台播放音频时不冻结 / 冻结时保留网络连接 / 冻结时保留闹钟 / 允许内存回收 / **收到推送时解冻** / 白名单；Google 应用额外有一个 **允许冻结 Google 服务**（默认关闭，打开后才会解除保护）；
 - **自定义进程冻结**：先选规则（全部进程 / 只冻选中 / 排除选中），再在进程列表里勾选要参与规则的进程；进程列表会列出 `PackageManager` 里声明的全部进程（包含当前没运行的，主进程排在最前），也可以对单个正在运行的进程直接点「冻结 / 解冻」（手动冻结同样受当前进程规则约束，规则排除的进程会提示先调整规则）；
 - **白名单应用**：仍然整应用不冻结、不参与内存回收，但可以手动冻结它的子进程；把规则设成「只冻选中 / 排除选中」后，子进程会按规则自动部分冻结。**主进程永远不会被冻结**（白名单应用跳过了 Binder 临时解冻，主进程被冻住会直接无响应）；
+- **Google 全家桶**：默认仍受保护，应用列表里名字前会显示 `(Google 保护)`，不能冻结。不使用 FCM / 谷歌推送时，点进对应应用打开「允许冻结 Google 服务」即可解除保护并参与自动冻结；关闭开关会恢复保护并解冻。使用 FCM 的用户保持默认即可；
 - **冻结整个应用 / 解冻整个应用** 按钮（白名单应用禁用整应用冻结），以及实时的「已冻结 / 部分冻结」状态和每个进程的 pid。
 
 这些选项按 `包名#用户ID` 存在 `ApplicationSettings.json` 的 `appOptions` 字段里，每个应用互相独立。
@@ -224,7 +226,7 @@ bash scripts/package-module.sh
 产物：
 
 - APK：`app/build/outputs/apk/release/app-release.apk`（仓库自带公开测试签名，见 [signing/README.md](signing/README.md)）
-- 模块 zip：`dist/Cirno-Recycle-Plus-v1.2.1.zip`
+- 模块 zip：`dist/Cirno-Recycle-Plus-v1.2.2.zip`
 - 校验值：`dist/CHECKSUMS.txt`
 
 ## 目录结构
@@ -271,8 +273,14 @@ A：Cirno 的保活机制：应用收到 Binder / 广播 / 媒体按键等唤醒
 **Q：检查更新一直失败 / 看不到新版本提示？**
 A：应用内的更新检查会依次尝试 `raw.githubusercontent.com` 和 jsDelivr 镜像；国内网络访问 GitHub raw 经常超时，失败时静默跳过、不影响使用。确认手机能访问 GitHub 后到设置页点「立即检查」即可。新版本信息来自仓库根目录的 [`update.json`](update.json)。
 
+**Q：不用 FCM / 谷歌推送，想把 Google 全家桶也冻掉？**
+A：v1.2.2 起可以逐个选择：Google 应用默认仍受保护（名字前显示 `(Google 保护)`），点进应用后打开「允许冻结 Google 服务」即可解除保护并参与自动冻结；关闭该开关会恢复保护并主动解冻。使用 FCM 的用户不要打开这个开关，否则 GMS 被冻结后推送会断。
+
+**Q：v1.2.1 一打开应用列表就闪退？**
+A：v1.2.1 的白名单集合用了 `Set.of(...)`，里面 `app.revanced.android.gms` 重复了一次，Java 在类初始化时直接抛 `IllegalArgumentException`，导致 App / system_server 加载 `CommonConstants` 就崩溃。v1.2.2 已改为 `LinkedHashSet` 去重构造，并加了回归测试；升级到 v1.2.2 即可。
+
 **Q：装了模块之后 FCM / 推送收不到了？**
-A：v1.2.1 已针对这条链路修复：
+A：v1.2.1 已针对这条链路修复（v1.2.2 保留并加固）：
 - GMS / GSF / Play 商店等推送基础设施默认保护，不会冻结；
 - FCM 广播到达时会先把目标应用解冻，并给 15 秒投递窗口（应用面板里可关「收到推送时解冻」）；
 - 推送广播不会再被「冻结进程跳过广播」拦掉；

@@ -100,7 +100,10 @@ fun MainScreen() {
     fun getInstalledApps(context: Context): List<ApplicationInfo> {
         val packageManager = context.packageManager
         return packageManager.getInstalledApplications(PackageManager.GET_META_DATA).filter {
-            !CommonConstants.isWhitelistApps(it.packageName) && !PKGUtils.isSystemApp(it)
+            // Google 全家桶默认受保护, 但仍要显示在列表里: 用户可能不使用 FCM,
+            // 需要在应用详情里单独打开「允许冻结 Google 服务」.
+            CommonConstants.isGoogleFamily(it.packageName) ||
+                (!CommonConstants.isWhitelistApps(it.packageName) && !PKGUtils.isSystemApp(it))
         }
     }
 
@@ -214,6 +217,9 @@ fun MainScreen() {
         val userId = PKGUtils.getUserId(appInfo.uid)
         // 白名单状态不缓存: 长按面板里改完白名单后, 首页列表在 2 秒内轮询触发重组时能立刻刷新.
         val white = AppConfigs.isWhiteApp(appInfo.packageName, userId)
+        // Google 服务默认受保护; 用户单独放行后就不显示这个标记.
+        val googleProtected = CommonConstants.isGoogleFamily(appInfo.packageName) &&
+            !AppConfigs.getOptions(appInfo.packageName, userId).allowFreezeGoogle
 
         // 配置损坏时禁止进应用页 / 长按: 否则白名单开关会用默认值整份覆盖配置, 绕过设置页的写锁.
         val canOpen = rootOk.value && (configOk.value || !GlobalVars.configCorrupted)
@@ -242,9 +248,14 @@ fun MainScreen() {
                 modifier = Modifier.weight(1f)
             ) {
                 Text(
-                    text = (if (white) "(白名单) " else "") + appName,
+                    text = (if (white) "(白名单) " else "") +
+                        (if (googleProtected) "(Google 保护) " else "") + appName,
                     style = MaterialTheme.typography.titleMedium,
-                    color = (if (white) Color(0xFF4CAF50) else Color.Unspecified)
+                    color = when {
+                        white -> Color(0xFF4CAF50)
+                        googleProtected -> Color(0xFFFFA000)
+                        else -> Color.Unspecified
+                    }
                 )
                 Text(
                     text = (if (userId == 0) "" else "$userId#") + appInfo.packageName,

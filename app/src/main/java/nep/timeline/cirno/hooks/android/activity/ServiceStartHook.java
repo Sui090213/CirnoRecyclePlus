@@ -69,21 +69,25 @@ public class ServiceStartHook {
     }
 
     private static void handle(Object[] args) {
-        Intent intent = null;
-        for (Object arg : args) {
-            if (arg instanceof Intent) {
-                intent = (Intent) arg;
-                break;
+        try {
+            Intent intent = null;
+            for (Object arg : args) {
+                if (arg instanceof Intent) {
+                    intent = (Intent) arg;
+                    break;
+                }
             }
+
+            if (intent == null)
+                return;
+
+            String packageName = PushUtils.packageOf(intent);
+            if (packageName == null || packageName.isEmpty())
+                return;
+
+            FreezerService.temporaryUnfreezeIfFrozenByPackage(packageName, "启动服务", SERVICE_WAKE_HOLD_MS);
+        } catch (Throwable ignored) {
+            // Hook 回调里的异常绝对不能抛回 system_server: 那会导致系统进程直接崩溃.
         }
-
-        if (intent == null)
-            return;
-
-        String packageName = PushUtils.packageOf(intent);
-        if (packageName == null || packageName.isEmpty())
-            return;
-
-        FreezerService.temporaryUnfreezeIfFrozenByPackage(packageName, "启动服务", SERVICE_WAKE_HOLD_MS);
     }
 }

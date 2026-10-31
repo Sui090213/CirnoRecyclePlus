@@ -69,56 +69,60 @@ public class BroadcastSkipHook {
     }
 
     private static void handle(CakeHooker.AfterHookCallback callback) {
-        Object[] args = callback.getArgs();
-        if (args.length < 2 || args[0] == null)
-            return;
-
-        Object record = args[0];
-        Object target = args[1];
-
-        Intent intent = null;
         try {
-            Object field = CakeReflection.getObjectField(record, "intent");
-            if (field instanceof Intent)
-                intent = (Intent) field;
-        } catch (Throwable ignored) {
-        }
+            Object[] args = callback.getArgs();
+            if (args.length < 2 || args[0] == null)
+                return;
 
-        String action = intent == null ? null : intent.getAction();
+            Object record = args[0];
+            Object target = args[1];
 
-        // 推送广播: 先解冻, 再取消「跳过」决定. 即使前面的 BroadcastIntentHook 没生效,
-        // 这里也能保证推送被投递到目标应用.
-        if (PushUtils.isPushAction(action)) {
-            String packageName = PushUtils.packageOf(intent);
-            if (packageName != null)
-                FreezerService.temporaryUnfreezeIfNeedByPackage(packageName, "MESSAGE PUSH", PushUtils.PUSH_HOLD_MS);
-
-            if (callback.result != null) {
-                Log.d("放行推送广播: " + packageName + " (系统原跳过原因: " + callback.result + ")");
-                callback.result = null;
+            Intent intent = null;
+            try {
+                Object field = CakeReflection.getObjectField(record, "intent");
+                if (field instanceof Intent)
+                    intent = (Intent) field;
+            } catch (Throwable ignored) {
             }
-            return;
-        }
 
-        if (callback.result != null)
-            return;
+            String action = intent == null ? null : intent.getAction();
 
-        // 非推送: 沿用原逻辑, 冻结进程的广播不投递. 只处理 BroadcastFilter
-        // (注册接收器); 静态接收器交给系统自己的策略.
-        try {
-            Object receiverList = CakeReflection.getObjectField(target, "receiverList");
-            if (receiverList == null)
+            // 推送广播: 先解冻, 再取消「跳过」决定. 即使前面的 BroadcastIntentHook 没生效,
+            // 这里也能保证推送被投递到目标应用.
+            if (PushUtils.isPushAction(action)) {
+                String packageName = PushUtils.packageOf(intent);
+                if (packageName != null)
+                    FreezerService.temporaryUnfreezeIfNeedByPackage(packageName, "MESSAGE PUSH", PushUtils.PUSH_HOLD_MS);
+
+                if (callback.result != null) {
+                    Log.d("放行推送广播: " + packageName + " (系统原跳过原因: " + callback.result + ")");
+                    callback.result = null;
+                }
+                return;
+            }
+
+            if (callback.result != null)
                 return;
 
-            Object app = CakeReflection.getObjectField(receiverList, "app");
-            if (app == null)
-                return;
+            // 非推送: 沿用原逻辑, 冻结进程的广播不投递. 只处理 BroadcastFilter
+            // (注册接收器); 静态接收器交给系统自己的策略.
+            try {
+                Object receiverList = CakeReflection.getObjectField(target, "receiverList");
+                if (receiverList == null)
+                    return;
 
-            ProcessRecord processRecord = ProcessService.getProcessRecord(app);
-            if (processRecord != null && processRecord.isFrozen())
-                callback.result = "Skipping deliver [Cirno Recycle+]: frozen process";
+                Object app = CakeReflection.getObjectField(receiverList, "app");
+                if (app == null)
+                    return;
+
+                ProcessRecord processRecord = ProcessService.getProcessRecord(app);
+                if (processRecord != null && processRecord.isFrozen())
+                    callback.result = "Skipping deliver [Cirno Recycle+]: frozen process";
+            } catch (Throwable ignored) {
+                // target 不是 BroadcastFilter / 字段不存在: 保持系统原行为.
+            }
         } catch (Throwable ignored) {
-            // target 不是 BroadcastFilter / 字段不存在: 保持系统原行为.
+            // Hook 回调里的异常绝对不能抛回 system_server.
         }
     }
 }

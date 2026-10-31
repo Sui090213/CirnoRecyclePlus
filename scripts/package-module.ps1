@@ -99,7 +99,7 @@ if (-not (Test-Path $propFile)) {
     throw "找不到 module/module.prop"
 }
 
-$version = '1.2.1'
+$version = '1.2.2'
 foreach ($line in Get-Content $propFile) {
     if ($line -match '^\s*version\s*=\s*(.+)$') {
         $version = $Matches[1].Trim().TrimStart('v', 'V')

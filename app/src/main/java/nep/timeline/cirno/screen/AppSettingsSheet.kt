@@ -42,6 +42,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import nep.timeline.cirno.CommonConstants
 import nep.timeline.cirno.client.AppOptionsStore
 import nep.timeline.cirno.client.AppOptionsValue
 import nep.timeline.cirno.client.AppPrefs
@@ -75,6 +76,7 @@ private fun AppOptionsValue.applyTo(options: AppOptions) {
     options.keepAlarms = keepAlarms
     options.allowReclaim = allowReclaim
     options.wakeOnPush = wakeOnPush
+    options.allowFreezeGoogle = allowFreezeGoogle
     options.processMode = processMode
     options.selectedProcesses = LinkedHashSet(selected)
 }
@@ -328,14 +330,43 @@ fun AppSettingsContent(
         }
 
         val current = optionsUi ?: return@Column
+        // Google 服务未放行时, 「参与自动冻结」开关没有实际效果, 置灰避免误解.
+        val googleProtected = CommonConstants.isGoogleFamily(packageName) && !current.allowFreezeGoogle
 
         // ------------------------------------------------------------------
         // 冻结开关
         // ------------------------------------------------------------------
         AppSectionCard("冻结选项") {
+            // Google 服务 (GMS / GSF / Play 商店等) 默认受保护, 否则冻结后会切断 FCM 推送.
+            // 不使用 FCM 的用户可以在这里单独放行这个应用, 再用下面的开关决定是否自动冻结.
+            if (CommonConstants.isGoogleFamily(packageName)) {
+                AppSwitchRow(
+                    title = "允许冻结 Google 服务",
+                    subtitle = "默认关闭以保护 FCM 推送。不使用谷歌推送时可以打开；打开后会解除保护并参与自动冻结，关闭时会恢复保护并解冻。",
+                    checked = current.allowFreezeGoogle,
+                    onCheckedChange = { value ->
+                        val wasAllowed = current.allowFreezeGoogle
+                        update {
+                            if (value) {
+                                // 放行保护, 同时打开「参与自动冻结」: 这个开关本身就是要冻结它.
+                                it.copy(allowFreezeGoogle = true, enabled = true)
+                            } else {
+                                it.copy(allowFreezeGoogle = false)
+                            }
+                        }
+                        // 关闭保护时如果应用正被冻着, 主动解冻一次, 避免一直卡在冻结状态.
+                        if (!value && wasAllowed)
+                            sendAction(RuntimeAction.TYPE_THAW_APP)
+                    }
+                )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+            }
             AppSwitchRow(
                 title = "参与自动冻结",
-                subtitle = "关闭后这个应用永远不会被冻结 (仍然可以被内存回收)",
+                subtitle = if (googleProtected)
+                    "Google 服务当前受保护, 先打开上面的「允许冻结 Google 服务」"
+                else
+                    "关闭后这个应用永远不会被冻结 (仍然可以被内存回收)",
                 checked = current.enabled,
                 onCheckedChange = { value ->
                     val wasEnabled = current.enabled
@@ -344,7 +375,8 @@ fun AppSettingsContent(
                     // 否则它会一直冻着, 而 Binder / 广播唤醒路径都要等配置生效才能解冻.
                     if (!value && wasEnabled)
                         sendAction(RuntimeAction.TYPE_THAW_APP)
-                }
+                },
+                enabled = !googleProtected
             )
             AppSwitchRow(
                 title = "后台播放音频时不冻结",
@@ -734,7 +766,8 @@ private fun AppSwitchRow(
     title: String,
     subtitle: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
 ) {
     Row(
         modifier = Modifier
@@ -751,6 +784,6 @@ private fun AppSwitchRow(
             )
         }
         Spacer(modifier = Modifier.width(8.dp))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }

@@ -124,25 +124,29 @@ public class BroadcastIntentHook {
 
     /** 广播参数里找 Intent, 找到推送 action 就按包名解冻. */
     private static void handle(Object[] args) {
-        Intent intent = null;
-        for (Object arg : args) {
-            if (arg instanceof Intent) {
-                intent = (Intent) arg;
-                break;
+        try {
+            Intent intent = null;
+            for (Object arg : args) {
+                if (arg instanceof Intent) {
+                    intent = (Intent) arg;
+                    break;
+                }
             }
+
+            if (intent == null)
+                return;
+
+            String action = intent.getAction();
+            if (!PushUtils.isPushAction(action))
+                return;
+
+            String packageName = PushUtils.packageOf(intent);
+            if (packageName == null)
+                return;
+
+            FreezerService.temporaryUnfreezeIfNeedByPackage(packageName, "MESSAGE PUSH", PushUtils.PUSH_HOLD_MS);
+        } catch (Throwable ignored) {
+            // Hook 回调里的异常绝对不能抛回 system_server.
         }
-
-        if (intent == null)
-            return;
-
-        String action = intent.getAction();
-        if (!PushUtils.isPushAction(action))
-            return;
-
-        String packageName = PushUtils.packageOf(intent);
-        if (packageName == null)
-            return;
-
-        FreezerService.temporaryUnfreezeIfNeedByPackage(packageName, "MESSAGE PUSH", PushUtils.PUSH_HOLD_MS);
     }
 }

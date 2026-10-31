@@ -55,7 +55,16 @@ public class AppRecord {
      * <p>这些应用一旦被冻住, 整机 UI / 输入法 / 框架服务会直接不可用, 没有安全的唤醒路径.
      */
     public boolean isProtected() {
-        return packageName == null || equals(InputMethodData.currentInputMethodApp) || PKGUtils.isSystemApp(applicationInfo) || CommonConstants.isWhitelistApps(packageName);
+        if (packageName == null)
+            return true;
+        if (equals(InputMethodData.currentInputMethodApp))
+            return true;
+        // Google 服务默认受保护 (防止冻结 GMS 后 FCM 推送收不到).
+        // 用户在不使用 FCM 时可以在应用面板里显式打开「允许冻结 Google 服务」,
+        // 这时才绕过系统应用 / 内置白名单保护.
+        if (CommonConstants.isGoogleFamily(packageName))
+            return !AppConfigs.isGoogleFreezeAllowed(packageName, userId);
+        return PKGUtils.isSystemApp(applicationInfo) || CommonConstants.isWhitelistApps(packageName);
     }
 
     /**

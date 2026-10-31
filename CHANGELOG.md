@@ -3,6 +3,51 @@
 本文件只记录 **Cirno Recycle+（二改版）** 相对上游 Cirno 的改动。上游自己的更新记录请见
 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)。
 
+## v1.2.2 — 2026-10-31
+
+修复 v1.2.1 的闪退，并补上「不使用 FCM 时也能自己选择冻结 Google 全家桶」的开关。
+
+### 修复
+
+- **修复一打开应用列表就闪退（v1.2.1 回归）**
+  - 根因：`CommonConstants.whiteApps` 用 `Set.of(...)` 初始化，里面把
+    `app.revanced.android.gms` 写了两遍。Java 的 `Set.of` 遇到重复元素会直接抛
+    `IllegalArgumentException: duplicate element`，导致 `CommonConstants` 类初始化失败
+    （`ExceptionInInitializerError`）。
+  - App 进程加载应用列表 / 判断白名单时触发这个类，就会闪退；system_server 侧第一次
+    判断 `AppRecord.isProtected()` 时同样会崩。
+  - 改为 `LinkedHashSet` + `Collections.unmodifiableSet` 构造白名单：重复项自动去重，
+    以后即使再手滑写重复也不会在类初始化阶段崩溃；顺带给 `isWhitelistApps(null)` 补了空判断。
+  - 新增 `CommonConstantsTest` 回归测试，直接触发类加载并覆盖 Google 集合 /
+    null 包名。
+- **Hook 回调兜底**
+  - `ServiceStartHook`、`BroadcastIntentHook`、`BroadcastSkipHook` 的回调整体包了
+    `try/catch (Throwable)`：任何反射 / 配置异常都只跳过本次处理，不再把异常抛回
+    system_server 导致系统进程崩溃。
+
+### 新增：Google 全家桶可单独选择冻结
+
+- Google 服务（GMS / GSF / Play 商店 / Google 配置更新 / ext.services / ext.shared /
+  Google App / Pixel 天气 / SafetyCore / MicroG 等）默认仍然受保护，保证 FCM 推送可用；
+- 这些应用现在**始终显示在首页应用列表**，名字前带 `(Google 保护)` 标记；
+- 打开某个 Google 应用后，新增开关「允许冻结 Google 服务」：
+  - 默认关闭；
+  - 打开后解除保护并同时打开「参与自动冻结」，之后按正常冻结流程处理（不需要再单独点一次）；
+  - 不使用 FCM / 不用谷歌推送的用户可以逐个放行；使用 FCM 的用户保持默认即可；
+  - 关闭这个开关时会恢复保护并主动解冻一次，避免应用卡在冻结状态；
+- 新增 `AppOptions.allowFreezeGoogle`（默认 `false`，旧配置缺省也是 `false`）。
+
+### 测试
+
+- 单元测试增加到 **23 个**，全部通过：`CommonConstantsTest` 2 个、
+  `AppOptionsLogicTest` 8 个、`UpdateLogicTest` 3 个、`MemoryLogicTest` 6 个、
+  `PushUtilsTest` 3 个、`ExampleUnitTest` 1 个；
+- `assembleDebug` / `assembleRelease` 通过。
+
+### 版本
+
+- 版本 1.2.1 → 1.2.2，APK `versionCode=5`，模块 `versionCode=12002`。
+
 ## v1.2.1 — 2026-10-31
 
 修复「安装模块后 FCM / 厂商推送收不到」的问题。推送链路本身没问题，是冻结逻辑把

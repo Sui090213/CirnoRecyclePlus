@@ -27,6 +27,7 @@ public class AppOptionsLogicTest {
         assertTrue("默认播放音频时跳过冻结", options.keepAudio);
         assertTrue("默认允许内存回收", options.allowReclaim);
         assertTrue("默认收到推送时解冻", options.wakeOnPush);
+        assertFalse("默认不允许冻结 Google 服务", options.allowFreezeGoogle);
         assertFalse("默认不保留网络", options.keepNetwork);
         assertFalse("默认不保留闹钟", options.keepAlarms);
         assertEquals(AppOptions.PROCESS_MODE_ALL, options.processMode);
@@ -114,6 +115,7 @@ public class AppOptionsLogicTest {
         assertTrue(options.enabled);
         assertTrue(options.keepAudio);
         assertTrue("旧配置缺省时默认推送唤醒", options.wakeOnPush);
+        assertFalse("旧配置缺省时默认不冻结 Google 服务", options.allowFreezeGoogle);
         assertNotNull(options.selected());
 
         // 有人手动把 selectedProcesses 写成 null 时也不能 NPE.
@@ -134,6 +136,7 @@ public class AppOptionsLogicTest {
         options.keepAlarms = true;
         options.allowReclaim = false;
         options.wakeOnPush = false;
+        options.allowFreezeGoogle = true;
         options.processMode = AppOptions.PROCESS_MODE_ONLY;
         options.selectedProcesses = new LinkedHashSet<>();
         options.selectedProcesses.add("com.example:push");
@@ -148,6 +151,7 @@ public class AppOptionsLogicTest {
         assertTrue(parsed.keepAlarms);
         assertFalse(parsed.allowReclaim);
         assertFalse(parsed.wakeOnPush);
+        assertTrue(parsed.allowFreezeGoogle);
         assertEquals(AppOptions.PROCESS_MODE_ONLY, parsed.processMode);
         assertTrue(parsed.shouldFreezeProcess("com.example:push"));
         assertFalse(parsed.shouldFreezeProcess("com.example"));
