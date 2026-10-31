@@ -27,6 +27,45 @@ public class ConfigManagerJson {
     private final Object ioLock = new Object();
 
     /**
+     * 上一次看到的配置文件 mtime.
+     *
+     * <p>FileObserver 在某些 ROM / root 写文件方式下会漏事件 (App 通过 root shell 写
+     * /data/misc 时尤其容易漏). RuntimeStateService 每 2 秒调用
+     * {@link #reloadIfChanged()} 做一次 mtime 兜底, 保证白名单 / Google 允许冻结等
+     * 设置改完后 system_server 一定能重载配置.
+     */
+    private long lastGlobalModified = Long.MIN_VALUE;
+    private long lastApplicationModified = Long.MIN_VALUE;
+
+    private long modified(String name) {
+        File file = new File(GlobalVars.CONFIG_DIR, name);
+        return file.exists() ? file.lastModified() : 0L;
+    }
+
+    private void rememberModified() {
+        lastGlobalModified = modified(globalSettingsName);
+        lastApplicationModified = modified(applicationSettingsName);
+    }
+
+    /**
+     * 每 2 秒由 RuntimeStateService 调用: 文件 mtime 变了就重读一次.
+     *
+     * <p>这是 FileObserver 的兜底, 不依赖文件系统事件是否送达.
+     */
+    public void reloadIfChanged() {
+        synchronized (ioLock) {
+            long globalModified = modified(globalSettingsName);
+            long applicationModified = modified(applicationSettingsName);
+            if (globalModified == lastGlobalModified && applicationModified == lastApplicationModified)
+                return;
+
+            Log.i("检测到配置文件变化 (mtime), 重新加载");
+            readConfigInternal();
+            rememberModified();
+        }
+    }
+
+    /**
      * system_server 侧读取配置 (以 root 直接读写文件).
      *
      * <p>关键约定: 文件存在但内容不完整 / 解析失败时, **保留内存里上一次的配置**,
@@ -36,6 +75,7 @@ public class ConfigManagerJson {
     public void readConfig() {
         synchronized (ioLock) {
             readConfigInternal();
+            rememberModified();
         }
     }
 
@@ -100,6 +140,7 @@ public class ConfigManagerJson {
     public void saveConfig() {
         synchronized (ioLock) {
             saveConfigInternal();
+            rememberModified();
         }
     }
 

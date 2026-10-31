@@ -216,20 +216,27 @@ adb shell 'for f in /sys/fs/cgroup/*/uid_*/pid_*/cgroup.freeze; do [ "$(cat $f)"
 1. 应用 `isProtected()`（系统应用 / 输入法 / 内置保护应用）→ 跳过；Google 全家桶默认也走保护，
    只有用户在应用面板里显式打开 `allowFreezeGoogle` 后才不再跳过；
 2. `enabled == false` → 跳过；
-3. 用户白名单 + `processMode == 0`（全部进程）→ 跳过（整应用不参与自动冻结）；
-4. 可见 / 定位 / 录音 / VPN → 跳过；音频且 `keepAudio` → 跳过；
-5. 逐个存活进程按 `processMode` 决定冻不冻；白名单应用的主进程永远跳过（主进程被冻住后，
-   白名单应用会跳过 Binder 临时解冻，应用会直接无响应）；
+3. **用户白名单（v1.2.3）→ 直接跳过，且 `reconcile` 解冻该应用全部已冻结进程**；
+   白名单不再受 `processMode` 影响，子进程 / 悬浮窗进程也不会被自动或手动冻结；
+4. 可见 / 定位 / 录音 / VPN → 跳过；显式允许冻结 Google 服务时跳过定位 / 录音 / VPN；
+   音频且 `keepAudio` → 跳过；
+5. 逐个存活进程按 `processMode` 决定冻不冻；
 6. **只有全部存活进程都冻结成功**才：
    - 设置 `appRecord.frozen = true`；
    - 上报 `reportOneUidFrozenStateChanged` / `socketDestroy`（受 `keepNetwork` 影响；
      v1.2.1 起 `keepNetwork` 在 Android 16 上也不再上报 frozen）；
    - 移除闹钟（受 `keepAlarms` 影响）；
-   - 白名单应用例外：只做进程级部分冻结，不上报整个 uid、不断网、不移闹钟；
 7. 只冻结了一部分时只记录进程级 `frozen` 标记（`manuallyFrozen` 区分手动 / 自动来源），
    **不上报整个 uid 冻结**，避免系统按「整应用冻结」错误调度。
 
 对应的 `thaw()` 也改成遍历所有进程解冻，不再依赖 `appRecord.frozen`，所以「部分冻结」也能被正确解冻。
+
+### 12.0.1 配置 mtime 兜底（v1.2.3）
+
+`ConfigFileObserver` 在部分 ROM / root shell 写 `/data/misc` 时可能漏事件。`RuntimeStateService`
+每 2 秒调用 `ConfigManager.manager.reloadIfChanged()`，按 `GlobalSettings.json` /
+`ApplicationSettings.json` 的 mtime 变化重载配置，确保白名单 / `allowFreezeGoogle` 修改在
+2 秒内被 system_server 看到。
 
 ### 12.1 配置变化后即时生效（v1.2.0）
 

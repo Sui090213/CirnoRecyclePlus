@@ -26,7 +26,7 @@ command -v set_perm >/dev/null 2>&1 || set_perm() { :; }
 command -v set_perm_recursive >/dev/null 2>&1 || set_perm_recursive() { :; }
 
 ui_print "********************************************"
-ui_print "- Cirno Recycle+ v1.2.2 (作者: flyingr)"
+ui_print "- Cirno Recycle+ v1.2.3 (作者: flyingr)"
 ui_print "- 基于 Cirno (GPL-3.0) 二次修改"
 ui_print "********************************************"
 
@@ -178,5 +178,5 @@ ui_print "  3) 按需开启冻结后内存回收 / 前台内存压制等开关"
 ui_print "********************************************"
 ui_print "- 配置目录: /data/misc/CirnoRecycle"
 ui_print "- 运行日志: /data/misc/CirnoRecycle/log/current.log"
-ui_print "- 作者: flyingr  ·  版本: 1.2.2  ·  GPL-3.0"
+ui_print "- 作者: flyingr  ·  版本: 1.2.3  ·  GPL-3.0"
 ui_print "********************************************"

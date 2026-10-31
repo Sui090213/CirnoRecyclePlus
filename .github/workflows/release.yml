@@ -23,12 +23,19 @@ jobs:
           java-version: "25"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK packages
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          # sdkmanager 需要 JDK 17; 构建本身仍使用 setup-java 的 JDK 25.
+          export JAVA_HOME="${JAVA_HOME_17_X64:-$JAVA_HOME}"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -38,6 +45,14 @@ jobs:
 
       - name: Package flashable module zip
         run: bash scripts/package-module.sh
+
+      - name: Collect standalone APK and source zip
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cp app/build/outputs/apk/release/app-release.apk "dist/Cirno-Recycle-Plus-v${VERSION}.apk"
+          git archive --format=zip --output "dist/Cirno-Recycle-Plus-v${VERSION}-source.zip" HEAD
+          cd dist
+          sha256sum *.apk *.zip > CHECKSUMS.txt
 
       - name: Show artifacts
         run: |
@@ -51,8 +66,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            dist/*.zip
-            dist/CHECKSUMS.txt
+            dist/*
           body: |
             Cirno Recycle+ ${{ github.ref_name }}
 

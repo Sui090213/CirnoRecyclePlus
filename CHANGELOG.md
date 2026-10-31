@@ -3,6 +3,33 @@
 本文件只记录 **Cirno Recycle+（二改版）** 相对上游 Cirno 的改动。上游自己的更新记录请见
 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)。
 
+## v1.2.3 — 2026-10-31
+
+一个小版本，把白名单语义改成「绝对保护」，并修复配置热重载和 Google 服务允许冻结。
+
+### 修复
+
+- **白名单改为绝对保护**
+  - 以前白名单只保证主进程不冻；如果进程规则是「只冻选中 / 排除选中」，子进程仍可能被自动或手动冻结。
+    悬浮窗 / 服务进程跑在 `:xxx` 子进程里时，表现就是「正常几秒后悬浮窗不动」。
+  - v1.2.3 起，只要应用在白名单里：
+    - 自动冻结直接跳过，不再看 `processMode`；
+    - 所有子进程也不允许自动或手动冻结；
+    - `reconcile` 会把所有已冻结进程（包括手动冻结）解冻；
+    - Binder / 广播 / 服务唤醒只负责解冻，不再重新安排冻结。
+  - UI 同步：白名单开启时进程规则置灰，进程列表不再允许勾选 / 手动冻结。
+- **配置热重载 mtime 兜底**
+  - `ConfigFileObserver` 在某些 ROM 或 root shell 写文件时可能漏事件，导致白名单 / Google 允许冻结改完不生效。
+  - `RuntimeStateService` 每 2 秒检查 `GlobalSettings.json` / `ApplicationSettings.json` 的 mtime，变化就重新加载。
+- **Google 服务允许冻结后真正生效**
+  - 白名单和 Google 允许冻结都依赖配置重载；mtime 兜底后 `allowFreezeGoogle` 能及时被 system_server 读到。
+  - 用户显式允许冻结 Google 服务时，跳过定位 / 录音 / VPN 保护（仍然不允许冻结前台应用），
+    避免 GMS 因为常驻定位监听而永远冻不上。
+
+### 版本
+
+- 版本 1.2.2 → 1.2.3，APK `versionCode=6`，模块 `versionCode=12003`。
+
 ## v1.2.2 — 2026-10-31
 
 修复 v1.2.1 的闪退，并补上「不使用 FCM 时也能自己选择冻结 Google 全家桶」的开关。

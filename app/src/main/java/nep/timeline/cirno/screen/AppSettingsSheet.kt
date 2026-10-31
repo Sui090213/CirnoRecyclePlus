@@ -410,7 +410,7 @@ fun AppSettingsContent(
             )
             AppSwitchRow(
                 title = "白名单",
-                subtitle = "整应用不冻结、不参与内存回收; 仍然可以冻结它的子进程 (主进程不会被冻)",
+                subtitle = "v1.2.3 起白名单是绝对保护：整个应用（含所有子进程）都不会被自动或手动冻结，也不参与内存回收。",
                 checked = white,
                 onCheckedChange = { value ->
                     if (writesLocked) {
@@ -424,6 +424,8 @@ fun AppSettingsContent(
                                 toast("保存失败: 请检查 root 权限")
                             else if (!changed)
                                 toast("白名单没有变化")
+                            else if (value)
+                                sendAction(RuntimeAction.TYPE_THAW_APP)
                         }
                     }
                 }
@@ -456,7 +458,7 @@ fun AppSettingsContent(
             if (white) {
                 Spacer(Modifier.size(6.dp))
                 Text(
-                    text = "白名单应用: 整应用不参与自动冻结, 主进程不允许冻结; 可以手动冻结子进程, 也可以把规则改成「只冻选中 / 排除选中」, 让子进程按规则自动部分冻结.",
+                    text = "白名单是绝对保护：整个应用（含所有子进程）都不会被自动或手动冻结，也不参与内存回收。下面的进程规则暂时不生效。",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF4CAF50)
                 )
@@ -466,17 +468,20 @@ fun AppSettingsContent(
                 FilterChip(
                     selected = current.processMode == AppOptions.PROCESS_MODE_ALL,
                     onClick = { update { it.copy(processMode = AppOptions.PROCESS_MODE_ALL) } },
-                    label = { Text("全部进程") }
+                    label = { Text("全部进程") },
+                    enabled = !white
                 )
                 FilterChip(
                     selected = current.processMode == AppOptions.PROCESS_MODE_ONLY,
                     onClick = { update { it.copy(processMode = AppOptions.PROCESS_MODE_ONLY) } },
-                    label = { Text("只冻选中") }
+                    label = { Text("只冻选中") },
+                    enabled = !white
                 )
                 FilterChip(
                     selected = current.processMode == AppOptions.PROCESS_MODE_EXCEPT,
                     onClick = { update { it.copy(processMode = AppOptions.PROCESS_MODE_EXCEPT) } },
-                    label = { Text("排除选中") }
+                    label = { Text("排除选中") },
+                    enabled = !white
                 )
             }
             Spacer(Modifier.size(4.dp))
@@ -542,7 +547,7 @@ fun AppSettingsContent(
                             packageName = packageName,
                             row = row,
                             selected = current.selected.contains(row.name),
-                            canManualFreeze = row.running && appState?.visible != true,
+                            canManualFreeze = row.running && appState?.visible != true && !white,
                             isWhiteApp = white,
                             onSelectedChange = { checked ->
                                 update {
@@ -692,8 +697,8 @@ private fun AppProcessRow(
 ) {
     val displayName = row.name.takeIf { it.isNotBlank() } ?: "(未知进程)"
     val isMainProcess = row.name == packageName
-    // 白名单应用的主进程永远不会被冻结, 勾选它没有意义, 直接禁用.
-    val selectable = !(isWhiteApp && isMainProcess)
+    // v1.2.3: 白名单是绝对保护, 所有进程的勾选都禁用.
+    val selectable = !isWhiteApp
 
     Row(
         modifier = Modifier
@@ -728,9 +733,9 @@ private fun AppProcessRow(
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
             )
-            if (isWhiteApp && isMainProcess) {
+            if (isWhiteApp) {
                 Text(
-                    text = "白名单应用的主进程不会被冻结",
+                    text = "白名单应用：整个应用（含子进程）都不会被冻结",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

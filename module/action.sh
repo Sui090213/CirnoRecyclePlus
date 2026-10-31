@@ -9,7 +9,7 @@ MODDIR=${0%/*}
 PKG=com.flyingr.cirnorecycle
 
 echo "********************************************"
-echo "- Cirno Recycle+ v1.2.2 (flyingr)"
+echo "- Cirno Recycle+ v1.2.3 (flyingr)"
 echo "********************************************"
 
 # 模块是否被禁用

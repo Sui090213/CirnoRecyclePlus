@@ -1,0 +1,1 @@
+v1.2.3: whitelist is now absolute protection (including child processes, so floating windows stay alive), config changes are reloaded via a 2-second mtime fallback, and Google services can actually be frozen after enabling "allow freezing" (location/recording/VPN guards are skipped).

@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import nep.timeline.cirno.CommonConstants;
+import nep.timeline.cirno.configs.ConfigManager;
 import nep.timeline.cirno.configs.checkers.AppConfigs;
 import nep.timeline.cirno.configs.settings.AppOptions;
 import nep.timeline.cirno.entity.AppRecord;
@@ -126,6 +128,9 @@ public final class RuntimeStateService {
     }
 
     private static void tick() {
+        // FileObserver 可能漏掉 root shell 写 /data/misc 的事件; 每 2 秒按 mtime 兜底重载.
+        ConfigManager.manager.reloadIfChanged();
+
         boolean actionExecuted = processPendingActions();
 
         // 先把「应用选项 / 进程规则改动」对齐到实际 cgroup 状态 (每 2 秒一次):
@@ -397,14 +402,15 @@ public final class RuntimeStateService {
         String name = appRecord.getPackageNameWithUser();
         if (appRecord.isProtected())
             return "系统应用 / 内置保护应用不允许冻结: " + name;
+        // v1.2.3: 白名单绝对不冻, 手动也不能绕过.
+        if (appRecord.isWhiteListed())
+            return "白名单应用不允许冻结 (含子进程): " + name;
 
         AppOptions options = AppConfigs.getOptions(appRecord.getPackageName(), appRecord.getUserId());
         if (!options.enabled)
             return "该应用已设置为「不冻结」: " + name;
-        // 白名单 + 「全部进程」: 整应用不冻结; 想冻结子进程请到进程列表手动操作,
-        // 或者把进程规则改成「只冻选中 / 排除选中」(白名单 + 进程规则会自动做部分冻结).
-        if (appRecord.isWhiteListed() && options.processMode == AppOptions.PROCESS_MODE_ALL)
-            return "白名单应用不冻结整个应用, 可在进程列表里手动冻结单个进程: " + name;
+        boolean forceGoogle = options.allowFreezeGoogle
+                && CommonConstants.isGoogleFamily(appRecord.getPackageName());
 
         AppState appState = appRecord.getAppState();
         if (appState != null) {
@@ -412,11 +418,11 @@ public final class RuntimeStateService {
                 return "应用正在前台, 已阻止冻结: " + name;
             if (appState.isAudio() && options.keepAudio)
                 return "应用正在后台播放音频, 按设置不冻结: " + name;
-            if (appState.isRecording())
+            if (!forceGoogle && appState.isRecording())
                 return "应用正在录音, 已跳过: " + name;
-            if (appState.isLocation())
+            if (!forceGoogle && appState.isLocation())
                 return "应用正在使用定位, 已跳过: " + name;
-            if (appState.isVpn())
+            if (!forceGoogle && appState.isVpn())
                 return "应用正在使用 VPN, 已跳过: " + name;
         }
 
@@ -447,10 +453,15 @@ public final class RuntimeStateService {
         String name = appRecord.getPackageNameWithUser();
         if (appRecord.isProtected())
             return "系统应用 / 内置保护应用不允许冻结: " + name;
+        // v1.2.3: 白名单绝对不冻, 子进程手动也不能冻.
+        if (appRecord.isWhiteListed())
+            return "白名单应用不允许冻结任何进程 (含子进程): " + name;
 
         AppOptions options = AppConfigs.getOptions(appRecord.getPackageName(), appRecord.getUserId());
         if (!options.enabled)
             return "该应用已设置为「不冻结」: " + name;
+        boolean forceGoogle = options.allowFreezeGoogle
+                && CommonConstants.isGoogleFamily(appRecord.getPackageName());
 
         AppState appState = appRecord.getAppState();
         if (appState != null) {
@@ -458,22 +469,17 @@ public final class RuntimeStateService {
                 return "应用正在前台, 已阻止冻结进程 " + pid;
             if (appState.isAudio() && options.keepAudio)
                 return "应用正在后台播放音频, 按设置不冻结进程 " + pid;
-            if (appState.isRecording())
+            if (!forceGoogle && appState.isRecording())
                 return "应用正在录音, 已阻止冻结进程 " + pid;
-            if (appState.isLocation())
+            if (!forceGoogle && appState.isLocation())
                 return "应用正在使用定位, 已阻止冻结进程 " + pid;
-            if (appState.isVpn())
+            if (!forceGoogle && appState.isVpn())
                 return "应用正在使用 VPN, 已阻止冻结进程 " + pid;
         }
 
         ProcessRecord target = findProcess(appRecord, pid);
         if (target == null)
             return "进程 " + pid + " 已经退出";
-
-        // 白名单应用可以手动冻结子进程, 但主进程不能冻: 白名单会跳过 Binder 临时解冻,
-        // 主进程冻住后应用会直接无响应.
-        if (appRecord.isWhiteListed() && FreezerService.isMainProcess(appRecord, target.getProcessName()))
-            return "白名单应用不允许冻结主进程 (否则应用会无响应), 可以冻结它的子进程";
 
         // 手动冻结也不能绕过进程规则: 否则下一个 tick 的 reconcile 会立刻把它解冻,
         // 用户只会看到「已冻结」的提示但状态马上又变回未冻结.

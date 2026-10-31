@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import nep.timeline.cirno.CommonConstants;
 import nep.timeline.cirno.configs.checkers.AppConfigs;
 import nep.timeline.cirno.configs.settings.AppOptions;
 import nep.timeline.cirno.entity.AppRecord;
@@ -64,6 +65,12 @@ public class FreezerService {
         if (appRecord == null || appRecord.isProtected())
             return;
 
+        // v1.2.3: 白名单是绝对保护, 主进程和所有子进程都不允许自动冻结.
+        // 以前只有「白名单 + 全部进程」才整应用跳过; 使用「排除选中」时子进程仍会被冻,
+        // 悬浮窗跑在子进程里时就会表现为「正常几秒后悬浮窗不动」.
+        if (appRecord.isWhiteListed())
+            return;
+
         // 推送窗口内不冻结: 重新安排一次「窗口结束后的冻结」.
         long holdRemaining = freezeHoldRemaining(appRecord.getPackageName());
         if (holdRemaining > 0) {
@@ -80,12 +87,13 @@ public class FreezerService {
         if (!options.enabled)
             return;
 
-        // 用户白名单: 默认整应用不参与自动冻结; 只有用户显式选了「只冻选中 / 排除选中」
-        // (processMode != ALL) 才做进程级部分冻结, 而且主进程永远跳过.
-        if (appRecord.isWhiteListed() && options.processMode == AppOptions.PROCESS_MODE_ALL)
-            return;
+        // 用户显式允许冻结 Google 服务时, 跳过定位 / 录音 / VPN 保护; 但不跳过可见性判断.
+        boolean forceGoogle = options.allowFreezeGoogle
+                && CommonConstants.isGoogleFamily(appRecord.getPackageName());
 
-        if (appState.isVisible() || appState.isLocation() || appState.isRecording() || appState.isVpn())
+        if (appState.isVisible())
+            return;
+        if (!forceGoogle && (appState.isLocation() || appState.isRecording() || appState.isVpn()))
             return;
         // 正在后台播放音频: 默认跳过 (关掉该应用的「播放音频时不冻结」后才会冻).
         if (appState.isAudio() && options.keepAudio)
@@ -162,7 +170,8 @@ public class FreezerService {
      * 临时解冻逻辑, 应用会直接无响应, 所以主进程永远排除在冻结之外.
      */
     public static boolean shouldFreezeProcess(AppRecord appRecord, AppOptions options, String processName) {
-        if (appRecord != null && appRecord.isWhiteListed() && isMainProcess(appRecord, processName))
+        // v1.2.3: 白名单是绝对保护, 任何进程都不允许冻.
+        if (appRecord != null && appRecord.isWhiteListed())
             return false;
         return AppConfigs.shouldFreezeProcess(options, processName);
     }
@@ -370,6 +379,15 @@ public class FreezerService {
             return;
         }
 
+        // v1.2.3: 白名单是绝对保护, 自动冻结的手动冻结的子进程也统一解冻.
+        if (appRecord.isWhiteListed()) {
+            if (hasFrozenProcess(appRecord) || appRecord.isFrozen() || appRecord.isReportedFrozen()) {
+                Log.i(appRecord.getPackageNameWithUser() + " 是白名单, 解冻全部进程");
+                thawLocked(appRecord);
+            }
+            return;
+        }
+
         boolean enabled = AppConfigs.isFreezeEnabled(appRecord.getPackageName(), appRecord.getUserId());
         if (!enabled) {
             if (hasFrozenProcess(appRecord) || appRecord.isFrozen() || appRecord.isReportedFrozen()) {
@@ -380,25 +398,6 @@ public class FreezerService {
         }
 
         AppOptions options = AppConfigs.getOptions(appRecord.getPackageName(), appRecord.getUserId());
-
-        // 白名单 + 「全部进程」: 整应用不参与自动冻结, 只清理自动冻结的残留,
-        // 保留用户手动冻结的子进程 (否则手动冻结的白名单进程会被每 2 秒的自动对齐解掉).
-        if (appRecord.isWhiteListed() && options.processMode == AppOptions.PROCESS_MODE_ALL) {
-            boolean thawed = false;
-            for (ProcessRecord processRecord : appRecord.getProcessRecords()) {
-                if (processRecord == null || processRecord.isDeathProcess() || !processRecord.isFrozen())
-                    continue;
-                if (processRecord.isManuallyFrozen())
-                    continue;
-                FrozenRW.thaw(processRecord.getRunningUid(), processRecord.getPid());
-                processRecord.setFrozen(false);
-                thawed = true;
-            }
-            if (thawed)
-                Log.i(appRecord.getPackageNameWithUser() + " 是白名单, 解冻自动冻结的进程");
-            syncReportedStateLocked(appRecord);
-            return;
-        }
 
         if (!hasFrozenProcess(appRecord)) {
             if (appRecord.isFrozen())
@@ -450,9 +449,7 @@ public class FreezerService {
     private static boolean canAutoFreezeNow(AppRecord appRecord, AppOptions options) {
         if (appRecord == null || options == null || !options.enabled)
             return false;
-        if (appRecord.isProtected())
-            return false;
-        if (appRecord.isWhiteListed() && options.processMode == AppOptions.PROCESS_MODE_ALL)
+        if (appRecord.isProtected() || appRecord.isWhiteListed())
             return false;
 
         AppState appState = appRecord.getAppState();
@@ -582,14 +579,16 @@ public class FreezerService {
         if (appRecord == null || appRecord.isProtected())
             return;
 
-        // 白名单 + 「全部进程」的白名单应用如果当前没有被冻结的进程, 就不需要走
-        // 「解冻 + 重新安排冻结」: 这类应用不会自动冻结, 而默认白名单里的微信等 Binder
-        // 事件非常频繁, 全进 Freezer 队列没有意义. 「只冻选中 / 排除选中」模式仍然走完整流程,
-        // 这样才能在每次唤醒后把计时器重置, 不会在应用还在处理消息时就冻住子进程.
-        if (appRecord.isWhiteListed()
-                && AppConfigs.getOptions(appRecord.getPackageName(), appRecord.getUserId()).processMode == AppOptions.PROCESS_MODE_ALL
-                && !hasFrozenProcess(appRecord))
+        // v1.2.3: 白名单绝对不冻, 唤醒时只需要解冻历史残留, 不再重新安排冻结.
+        if (appRecord.isWhiteListed()) {
+            if (hasFrozenProcess(appRecord) || appRecord.isFrozen() || appRecord.isReportedFrozen()) {
+                synchronized (LOCK) {
+                    Log.i(appRecord.getPackageNameWithUser() + " 是白名单, " + reason + " 解冻全部进程");
+                    thawLocked(appRecord);
+                }
+            }
             return;
+        }
 
         synchronized (LOCK) {
             if (appRecord.isFrozen())
