@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -252,7 +253,8 @@ private val PRESETS = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MemoryScreen(activity: MemoryActivity) {
+fun SettingsScreen(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var config by remember { mutableStateOf<MemoryUiConfig?>(null) }
@@ -416,45 +418,32 @@ fun MemoryScreen(activity: MemoryActivity) {
             when (result) {
                 is UpdateChecker.Result.Available -> updateInfo = result.info
                 is UpdateChecker.Result.UpToDate -> Toast.makeText(
-                    activity,
+                    context,
                     "当前已是最新版本 (v${BuildConfig.VERSION_NAME})",
                     Toast.LENGTH_SHORT
                 ).show()
                 is UpdateChecker.Result.Failed -> Toast.makeText(
-                    activity,
+                    context,
                     "检查更新失败: ${result.message}",
                     Toast.LENGTH_SHORT
                 ).show()
-                null -> Toast.makeText(activity, "检查更新失败", Toast.LENGTH_SHORT).show()
+                null -> Toast.makeText(context, "检查更新失败", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.largeTopAppBarColors(),
-                title = { Text("设置") },
-                navigationIcon = {
-                    TextButton(onClick = { activity.finish() }) {
-                        Text("返回")
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            val current = config
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        val current = config
 
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
                 // 状态卡不管配置有没有读出来都显示, 这样没 root 时也能看到状态和日志入口.
+                XiaomiCompatCard()
                 StatusCard(
                     rootOk = rootOk,
                     configLoaded = current != null,
@@ -468,6 +457,7 @@ fun MemoryScreen(activity: MemoryActivity) {
 
                 // 外观 / 通用设置不依赖 root 和 system_server 配置, 没有 root 时也应该能用.
                 AppearanceSettingsCard()
+                BackgroundSettingsCard()
                 GeneralSettingsCard(
                     checkingUpdate = checkingUpdate,
                     onCheckUpdate = { checkUpdateNow() }
@@ -853,7 +843,6 @@ fun MemoryScreen(activity: MemoryActivity) {
                 }
             }
         }
-    }
 
     // 恢复默认的二次确认: 会覆盖所有内存参数, 避免误触.
     if (showResetConfirm) {

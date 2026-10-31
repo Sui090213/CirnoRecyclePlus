@@ -9,7 +9,7 @@ MODDIR=${0%/*}
 PKG=com.flyingr.cirnorecycle
 
 echo "********************************************"
-echo "- Cirno Recycle+ v1.2.3 (flyingr)"
+echo "- Cirno Recycle+ v1.3.1 (flyingr)"
 echo "********************************************"
 
 # 模块是否被禁用
@@ -17,6 +17,12 @@ if [ -f "$MODDIR/disable" ]; then
     echo "- 模块状态: 已禁用 (删除 disable 文件后重启生效)"
 else
     echo "- 模块状态: 已启用"
+fi
+
+# 小米 millet 兼容状态
+if [ -f "$MODDIR/millet_ctl.sh" ]; then
+    echo "- 小米 millet (Greeze):"
+    sh "$MODDIR/millet_ctl.sh" status 2>/dev/null | grep -v '=' | sed 's/^/    /'
 fi
 
 # APK 是否安装
@@ -59,6 +65,6 @@ else
 fi
 
 echo "********************************************"
-echo "- 正在打开 App (进去后点左上角齿轮进设置)..."
+echo "- 正在打开 App (进去后点底栏「设置」)..."
 am start -n "$PKG/.MainActivity" --user 0 >/dev/null 2>&1
 echo "********************************************"

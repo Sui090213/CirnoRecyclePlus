@@ -13,6 +13,9 @@
 MODDIR=${0%/*}
 PKG=com.flyingr.cirnorecycle
 
+# 先恢复 millet 属性 / 删除覆盖文件 / 标记，再清理日志.
+[ -f "$MODDIR/millet_ctl.sh" ] && sh "$MODDIR/millet_ctl.sh" restore-quiet >/dev/null 2>&1
+
 rm -f "$MODDIR/install.log"
 
 # 能卸载就卸载; 卸载不了也没关系, /data/adb/service.d 里的清理脚本会在

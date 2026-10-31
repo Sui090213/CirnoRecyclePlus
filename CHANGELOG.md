@@ -3,6 +3,73 @@
 本文件只记录 **Cirno Recycle+（二改版）** 相对上游 Cirno 的改动。上游自己的更新记录请见
 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)。
 
+## v1.3.1 — 2026-10-31
+
+小米 / HyperOS 的 millet（Greeze）兼容模式：刷入时自动检测、冲突时自动禁用，App 内可一键禁用 / 恢复。
+
+### 新增
+
+- **刷入自动检测 millet**
+  - 识别小米 / Redmi / POCO / HyperOS；
+  - 检测 `millet_core.ko`、已加载的 millet 内核模块、Greeze 服务 / millet 属性；
+  - 检测到冲突时在安装日志打印检测结果，并自动启用兼容模式；
+  - 如果已经安装了其他 millet 相关模块，自动处理会跳过，避免重复。
+- **内置一键禁用 / 恢复**
+  - 设置页「小米 millet 兼容」卡片显示：是否检测到、当前是否已禁用、内核模块是否加载、是否有备份；
+  - 一键禁用：备份原始属性 → 关闭 `persist.sys.gz.enable` / `persist.sys.millet.handshake` / `persist.sys.powmillet.enable` → 在模块目录写空的 `millet_core.ko` 覆盖文件 → 写 `millet_disabled` 标记；
+  - 恢复：按备份还原属性、删除覆盖文件和标记；
+  - 都只改 persist 属性和模块目录，不写 system 分区。
+- **开机继续处理**
+  - `post-fs-data.sh` / `service.sh` 再应用一次属性，尝试卸载已加载的 `millet_core`，停掉 millet 相关 init 服务；
+  - `millet_ctl.sh` 统一处理检测 / 禁用 / 恢复 / 开机应用，安装脚本、App、开机脚本共用一份逻辑；
+  - 新增 `service.d` 守卫：模块被停用 / 删除时自动恢复 millet 属性。
+- **App 状态与操作**
+  - `MilletControl` 通过 root 调 `millet_ctl.sh status/disable/enable`；
+  - 操作结果用 Toast + 卡片状态提示，需要重启才完全生效。
+
+### 版本
+
+- 开发版本 1.3.1，APK `versionCode=8`，模块 `versionCode=13001`。
+- 已发布：GitHub Release `v1.3.1`。
+
+## v1.3.0 — 开发版（未单独发布）
+
+这一版主要改界面：底栏三页、顶部搜索、自定义背景和页面返回动画，并补上小米 millet 冲突提示。
+
+### 新增
+
+- **底栏三页**
+  - 主界面改为「软件列表 / 设置 / 关于」三个底栏入口；
+  - 顶部常驻搜索框（应用名 / 包名），模块名称、激活状态、版本号收进底栏；
+  - 原来的整页设置（`MemoryActivity`）改为底栏「设置」页，左上空出来的位置不再放齿轮。
+- **应用详情页内嵌 + 返回动画**
+  - 点击应用不再启动 `ApplicationActivity`，改为 `MainActivity` 内部页面；
+  - 三页切换和详情页进入 / 返回统一使用 `AnimatedContent` 滑动 + 淡入淡出；
+  - 返回键 / 系统返回手势先回详情页，再回软件列表，不会直接退出。
+- **自定义背景**
+  - 支持本地图片（系统图片选择器）、http/https 图片链接、6 张在线示例图、4 套内置渐变；
+  - 图片按最长边 2560 缩放后复制到应用私有目录，不依赖 SAF 临时授权，也不申请存储权限；
+  - 不透明度 / 背景压暗两个滑条，拖动时实时预览，松手才落盘；
+  - 背景绘制在 `Scaffold` 下方，主题在开启背景时把 `background` / `surface` / `surfaceContainer*` 调成半透明，列表、卡片、底栏、弹窗都会透出背景。
+- **关于页**
+  - 版本 / 作者 / 激活状态 / GitHub / 下载 / 反馈 / 上游链接；
+  - 小米 millet 兼容提示、Google 服务说明、白名单说明、开源致谢。
+- **小米兼容提示**
+  - 设置页和关于页检测到小米 / Redmi / POCO 时提示 `millet_disable` 或关闭系统冻结，避免系统 millet 与本模块互相抢进程导致功耗升高。
+
+### 修复 / 改进
+
+- 应用列表搜索框从右上角按钮展开改为顶栏常驻，空查询不再需要手动开关。
+- 底栏激活状态和首页共用同一份 `RuntimeState` 轮询；打开详情页后停止主页面轮询，避免同时开多个 root shell。
+- 背景图片读取、缩放、网络下载全部放 IO 线程；在线缩略图按需加载，失败显示占位块。
+- Manifest 打开 `enableOnBackInvokedCallback`，Android 13+ 的系统预测性返回手势可以接管。
+
+### 版本
+
+- 开发版本 1.3.0，APK `versionCode=7`，模块 `versionCode=13000`。
+- **尚未发布**：`update.json` 仍指向 v1.2.3，避免把开发版推给已安装用户。
+- 本地验证：`assembleRelease` 通过；23 个单元测试全部通过。
+
 ## v1.2.3 — 2026-10-31
 
 一个小版本，把白名单语义改成「绝对保护」，并修复配置热重载和 Google 服务允许冻结。

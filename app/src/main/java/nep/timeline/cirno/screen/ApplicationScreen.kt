@@ -44,7 +44,7 @@ fun ApplicationScreen(activity: ApplicationActivity) {
     Scaffold(
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.largeTopAppBarColors(Color.Transparent),
+                colors = TopAppBarDefaults.topAppBarColors(Color.Transparent),
                 modifier = Modifier
                     .hazeEffect(hazeState) {
                         style = hazeStyle

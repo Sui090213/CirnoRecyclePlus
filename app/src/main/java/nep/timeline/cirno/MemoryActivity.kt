@@ -4,7 +4,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import nep.timeline.cirno.screen.MemoryScreen
+import nep.timeline.cirno.screen.SettingsScreen
+import nep.timeline.cirno.ui.AppBackground
 import nep.timeline.cirno.ui.CirnoTheme
 
 /**
@@ -20,7 +21,9 @@ class MemoryActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             CirnoTheme {
-                MemoryScreen(this)
+                AppBackground {
+                    SettingsScreen()
+                }
             }
         }
     }

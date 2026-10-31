@@ -1,0 +1,1 @@
+v1.3.1: automatically detects Xiaomi / Redmi / POCO millet (Greeze) during installation and disables it when it conflicts, with installer log messages; adds a Xiaomi millet compatibility card with one-tap disable / restore. Also includes the bottom navigation, persistent search, custom backgrounds and page transitions.

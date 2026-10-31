@@ -5,8 +5,11 @@
 
 # Cirno Recycle+
 
+> [!WARNING]
+> **AI 制作声明**：本项目的大部分代码由 AI 生成 / AI 辅助完成，真人作者已完成测试和部分修改。**如果你介意 AI 参与开发，请不要使用本项目。**
+>
 > 基于 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)（原 [Nep-Timeline/Cirno](https://github.com/Nep-Timeline/Cirno)）**二次修改**
-> 作者：**flyingr** · 版本：**1.2.3** · 协议：**GPL-3.0**
+> 作者：**flyingr** · 版本：**1.3.1** · 协议：**GPL-3.0**
 
 **先说明：这是二改，不是原作者的作品。** 原项目「Cirno」的版权归 Nep-Timeline / Freezer-Team 所有，本仓库只是在其基础上加了内存回收和前台内存压制功能，并保持同样的 GPL-3.0 开源协议。
 
@@ -55,6 +58,10 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 | 25 | **服务启动唤醒** | 冻结应用被 `startService` / `bindService` 拉起（部分 FCM 版本 / 厂商推送 / 后台任务）时，先解冻 15 秒让服务正常启动 | — |
 | 26 | **Google 全家桶可单独选择冻结** | 默认仍保护 GMS / GSF / Play 商店以免切断 FCM；不使用 FCM 时，可在应用列表里逐个打开「允许冻结 Google 服务」，再决定是否自动冻结 | ✅（单应用开关） |
 | 26 | **保留网络连接（Android 16 修复）** | 打开应用的「冻结时保留网络连接」后，Android 16 上也不再上报 frozen 状态、不再切断网络 | ✅（单应用开关） |
+| 27 | **底栏三页 + 顶部搜索** | 主界面改成「软件列表 / 设置 / 关于」三个底栏页面；软件列表顶部常驻搜索框，模块名称和激活状态收进底栏 | — |
+| 28 | **自定义背景** | 支持本地图片、网络链接、内置渐变；不透明度和压暗程度可调，背景会透到列表、设置、底栏和卡片 | ✅ |
+| 29 | **页面切换 / 返回动画** | 详情页和三页切换统一用滑动 + 淡入淡出，返回键和系统返回手势都会走动画 | — |
+| 30 | **小米 / HyperOS 兼容提示** | 刷入时检测小米 / Redmi / POCO 的 millet（Greeze），冲突时自动禁用并在安装日志提示；App 设置页可一键禁用 / 恢复，不改 system 分区 | ✅ |
 
 > 关于「GitHub 上能压制前台进程内存的模块」：我确实去找了。结论是**没有找到现成的、公开的、专门做 top-app `memory.high` 的 Magisk / LSPosed 模块**（GitHub 搜 `memory.high` 基本都是无关项目）。所以第 6、7、8 项是照着 AOSP 文档和几个内存优化项目的思路自己写的实现，不是直接搬的代码。没有引入 `process_madvise` JNI、没有改 lmkd 参数、没有改 zram 配置——这些要么需要 root shell / `CAP_SYS_NICE`，要么容易把设备调崩，不适合放进 LSPosed 模块里，所以没做。
 
@@ -68,7 +75,7 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 
 **步骤**
 
-1. 从 Release 页面下载 `Cirno-Recycle-Plus-v1.2.3.zip`。
+1. 从 Release 页面下载 `Cirno-Recycle-Plus-v1.3.1.zip`。
 2. 在 Magisk / KernelSU / APatch 里刷入（**建议在已开机的系统里刷**，这样刷入时就能自动装 APK；recovery 刷入也能用，只是 APK 要等开机后由 `service.sh` 自动补装）：
    - 刷入时会**自动安装配套 APK**（`com.flyingr.cirnorecycle`），并创建配置目录 `/data/misc/CirnoRecycle`；
    - 如果安装时 PackageManager 还没就绪、导致 APK 安装失败，模块会在**下次开机后自动补装一次**。
@@ -76,9 +83,9 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 4. 打开 **LSPosed** → **模块** → 启用 **Cirno Recycle+**。
    - 作用域已经在 APK 里静态声明为「系统框架（system）」，不需要手动勾选。
 5. 打开 **Cirno Recycle+** App：
-   - 左上角齿轮 → 设置（外观 / 主题、通用设置、内存回收、高级设置）；
-   - 首页列表会显示每个应用当前的冻结状态（已冻结 / 部分冻结 / 前台运行 / 后台播放 / 未运行），右上角可以搜索；
-   - **长按**任意应用 → 弹出这个应用单独的冻结面板；点一下应用也能进同一个详情页。
+   - 底部三个入口：**软件列表 / 设置 / 关于**；软件列表顶部是搜索框，模块名称和激活状态在底栏；
+   - 首页列表会显示每个应用当前的冻结状态（已冻结 / 部分冻结 / 前台运行 / 后台播放 / 未运行）；
+   - **长按**任意应用 → 弹出这个应用单独的冻结面板；点一下应用也能进同一个详情页，返回时有滑动动画。
 
 > 升级时直接刷入新 zip 覆盖即可，配置会保留。
 
@@ -92,6 +99,33 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 - **自动检查更新**：启动时检查 GitHub 上的 `update.json`（12 小时内最多一次），也可「立即检查」；
 - **后台应用优先排序**：首页把正在后台运行的应用排到最前面（默认开）；
 - **进程列表显示未运行进程**：应用面板的进程列表是否包含「已声明但当前没启动」的进程（默认开）。
+
+## 底部导航与自定义背景
+
+v1.3.0 起主界面不再把设置塞进一个独立整页，而是：
+
+- **顶栏**：软件列表页是常驻搜索框（应用名 / 包名实时过滤）；设置 / 关于页显示页面标题。
+- **底栏**：上半行是模块名称、激活状态圆点和版本号，下半行是三个入口：
+  - **软件列表**：应用列表、冻结状态、长按 / 点击进入应用详情；
+  - **设置**：外观 / 主题、自定义背景、通用设置、内存回收、高级设置；
+  - **关于**：版本、激活状态、GitHub / 下载 / 反馈链接、兼容性说明。
+
+### 自定义背景
+
+设置 → 自定义背景：
+
+- **选择图片**：走系统图片选择器，图片会按最长边 2560 缩放后复制到应用私有目录，不依赖临时授权；
+- **网络链接**：填 https 图片地址，下载后同样保存在本地，之后离线也能显示；
+- **在线图库**：内置 6 张 Lorem Picsum 示例图，点缩略图直接下载并应用；
+- **内置渐变**：初雪 / 极光 / 樱夜 / 深空，不联网也能用；
+- **不透明度**：控制背景图 / 渐变本身的可见程度；
+- **背景压暗**：顶部和底部加黑色渐变遮罩，保证亮色图片上文字仍然清楚。
+
+实现方式：`AppBackground` 在 `Scaffold` 之下绘制图片 / 渐变；主题开启背景时把 `background` / `surface` / `surfaceContainer*` 的 alpha 调低，所以列表、卡片、底栏、弹窗都会透出背景，而不是只在第一页顶部露一条。图片解码和缩放放在 IO 线程，滑动条拖动时实时预览，松手才写 SharedPreferences。
+
+### 页面返回动画
+
+应用详情页现在是 `MainActivity` 内部页面（原来的 `ApplicationActivity` 保留但不再作为入口）。软件列表 / 设置 / 关于三页和详情页都用 `AnimatedContent` 做滑动 + 淡入淡出；详情页还接了 `PredictiveBackHandler`，Android 13+ 的返回手势拖动时详情页会跟手往右偏，松手取消会弹回，完成才真正返回。Manifest 打开 `enableOnBackInvokedCallback`，三键导航的返回键也走同一套状态。
 
 ## 设置项说明
 
@@ -226,7 +260,7 @@ bash scripts/package-module.sh
 产物：
 
 - APK：`app/build/outputs/apk/release/app-release.apk`（仓库自带公开测试签名，见 [signing/README.md](signing/README.md)）
-- 模块 zip：`dist/Cirno-Recycle-Plus-v1.2.3.zip`
+- 模块 zip：`dist/Cirno-Recycle-Plus-v1.3.1.zip`
 - 校验值：`dist/CHECKSUMS.txt`
 
 ## 目录结构
@@ -236,8 +270,8 @@ app/                        Android 应用（LSPosed 模块主体）
   src/main/java/.../memory/ 内存回收 / 前台压制实现
   src/main/java/.../runtime/ 运行时状态通道（RuntimeState.json / RuntimeActions.json）
   src/main/java/.../client/  App 侧的状态读取 / 操作下发 / 单应用选项读写 / 进程枚举 / 更新检查 / 本地偏好
-  src/main/java/.../screen/ Compose 界面（MainScreen / ApplicationScreen / AppSettingsSheet / MemoryScreen / SettingsCards / UpdateDialog）
-  src/main/java/.../ui/     主题（深色模式 / 自定义主题色 / 莫奈取色）
+  src/main/java/.../screen/ Compose 界面（MainScreen / AboutScreen / SettingsScreen / BackgroundSettingsCard / AppSettingsSheet / SettingsCards / UpdateDialog）
+  src/main/java/.../ui/     主题（深色模式 / 自定义主题色 / 莫奈取色）+ 自定义背景绘制
   src/test/java/.../memory/ 纯 JVM 单元测试
   src/test/java/.../configs/ 应用选项 / 进程规则单元测试
   src/test/java/.../client/ 版本比较 / 进程名规范化单元测试
@@ -249,6 +283,24 @@ scripts/                    一键构建 / 打包脚本
 signing/                    公开测试签名密钥
 dist/                       打包产物（git 忽略）
 ```
+
+## 小米 / Redmi / POCO：millet 冲突
+
+MIUI / HyperOS 自带一套 millet（Greeze）冻结服务（`millet_core.ko` + `GreezeManagerService`）。它和本模块同时接管后台进程时，可能出现：
+
+- 系统刚解冻、本模块又冻结；
+- 本模块刚解冻、系统又冻结；
+- 两边反复写 `cgroup.freeze`，CPU 被唤醒，功耗明显升高。
+
+v1.3.1 起模块内置了 millet 兼容控制，不再需要额外刷 `millet_disable`：
+
+1. **刷入时自动检测**：机型是小米 / Redmi / POCO，且找到 `millet_core.ko`、已加载的 millet 内核模块、Greeze 服务或 millet 属性时，安装日志会打印检测结果；
+2. **自动禁用**：备份原始属性 → 关闭 `persist.sys.gz.enable` / `persist.sys.millet.handshake` / `persist.sys.powmillet.enable` → 在模块目录放一个空的 `millet_core.ko` 覆盖文件（下次开机 Magisk 生效）→ 写 `millet_disabled` 标记；
+3. **开机继续处理**：`post-fs-data.sh` / `service.sh` 会再应用一次属性、尝试卸载已加载的 `millet_core`，并停掉 millet 相关的 init 服务；
+4. **App 内可切换**：设置 → 小米 millet 兼容 → **一键禁用 millet / 恢复 millet**，状态会显示是否检测到、当前是否已禁用、内核模块是否加载；
+5. **可逆**：不写 system 分区、不删除系统文件；恢复会按安装时备份还原属性并删除覆盖文件。模块被停用 / 卸载时，安装脚本写入的 `service.d` 守卫也会自动恢复，避免系统冻结一直关着。
+
+禁用只影响系统 millet，不影响白名单、自动冻结和内存回收。需要重启后完全生效。如果设备上已经装了其他 millet 相关模块，自动处理会跳过，避免重复；App 里仍可手动接管。
 
 ## 常见问题
 
@@ -269,6 +321,12 @@ A：应用正在前台时禁止手动冻结（避免卡住正在用的界面）�
 
 **Q：手动冻结之后，为什么过几秒应用又自己解冻了？**
 A：Cirno 的保活机制：应用收到 Binder / 广播 / 媒体按键等唤醒时会临时解冻并在几秒后重新冻结。手动操作只改变「当前这一刻」的状态，不会覆盖这套机制；想长期只冻某个进程，用「自定义进程冻结」的规则。
+
+**Q：小米 / Redmi / POCO 上功耗反而变高了？**
+A：v1.3.1 起刷入时会自动检测 millet（Greeze）并禁用；如果仍有问题，到设置 → 小米 millet 兼容查看状态，确认已禁用后重启。禁用 / 恢复都只改 persist 属性和模块目录覆盖文件，不改 system 分区。如果安装了其他 millet 模块，自动处理会跳过，可在 App 里手动接管。
+
+**Q：怎么换背景 / 为什么背景没有铺满？**
+A：设置 → 自定义背景，可以选本地图片、填网络图片链接、点在线图库，或者直接用内置渐变。背景是画在 `Scaffold` 下面的，主题的卡片 / 底栏会在开启背景时变成半透明，所以会透到所有页面；如果觉得太花，把「背景压暗」调高或把「不透明度」调低。背景图片会复制到应用私有目录，不申请存储权限。
 
 **Q：检查更新一直失败 / 看不到新版本提示？**
 A：应用内的更新检查会依次尝试 `raw.githubusercontent.com` 和 jsDelivr 镜像；国内网络访问 GitHub raw 经常超时，失败时静默跳过、不影响使用。确认手机能访问 GitHub 后到设置页点「立即检查」即可。新版本信息来自仓库根目录的 [`update.json`](update.json)。
@@ -309,7 +367,7 @@ A：在 root 管理器里删除模块并重启即可。支持 `/data/adb/service
 
 - 本项目是 **[Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)**（原 Nep-Timeline/Cirno）的二次修改版本，**不是原创项目**。
 - 上游协议为 **GPL-3.0**，本项目同样以 **GPL-3.0** 发布，完整协议见 [LICENSE](LICENSE)。分发二进制时请保留本仓库源码与协议声明。
-- 本次二改的主要修改点：新增内存回收子系统（`app/src/main/java/nep/timeline/cirno/memory/`）、运行时状态与手动冻结通道（`runtime/` / `client/`）、单应用冻结选项与进程级冻结（含白名单应用的子进程部分冻结）、设置界面简化与外观 / 主题系统（`MemoryScreen` / `SettingsCards` / `ui/Theme.kt`）、首页搜索与后台优先排序、应用内更新检查（`update.json`）、刷入自动安装 APK 的 Magisk 模块（`module/`）、构建 / 打包脚本（`scripts/`），以及若干稳定性修复（配置热重载死循环、日志递归、白名单集合不可变等）。详细改动见 [CHANGELOG.md](CHANGELOG.md)。
+- 本次二改的主要修改点：新增内存回收子系统（`app/src/main/java/nep/timeline/cirno/memory/`）、运行时状态与手动冻结通道（`runtime/` / `client/`）、单应用冻结选项与进程级冻结（含白名单应用的子进程部分冻结）、设置界面简化与外观 / 主题系统（`SettingsScreen` / `SettingsCards` / `ui/Theme.kt`）、底栏三页导航与搜索框、自定义背景（`ui/Background.kt` / `client/BackgroundStore.kt`）、页面切换 / 返回动画、小米 millet 兼容提示、首页搜索与后台优先排序、应用内更新检查（`update.json`）、刷入自动安装 APK 的 Magisk 模块（`module/`）、构建 / 打包脚本（`scripts/`），以及若干稳定性修复（配置热重载死循环、日志递归、白名单集合不可变等）。详细改动见 [CHANGELOG.md](CHANGELOG.md)。
 - 本项目**免费**，不会以任何方式强制收费；二次分发请同样保持开源。
 
 ## 致谢

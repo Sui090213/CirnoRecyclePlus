@@ -1,0 +1,1 @@
+v1.3.0: bottom navigation with Apps / Settings / About, a persistent search bar, animated in-app detail page and back transitions, custom backgrounds (local image, URL, online gallery, built-in gradients) with opacity and dim controls, plus a Xiaomi millet conflict hint.

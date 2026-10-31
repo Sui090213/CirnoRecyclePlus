@@ -63,6 +63,28 @@ fun CirnoTheme(content: @Composable () -> Unit) {
         seedColorScheme(Color(seed), dark)
     }
 
+    // 自定义背景开启时把大面积表面做成半透明，让背景图 / 渐变透出来；
+    // 卡片、底栏、弹窗仍然保留足够的底色，保证文字可读.
+    val themedScheme = if (!hasCustomBackground()) {
+        colorScheme
+    } else {
+        val veil = (1f - 0.42f * AppPrefs.backgroundAlpha).coerceIn(0.50f, 0.96f)
+        fun Color.withVeil(extra: Float = 0f): Color =
+            copy(alpha = (veil + extra).coerceIn(0.35f, 0.97f))
+        colorScheme.copy(
+            background = colorScheme.background.withVeil(),
+            surface = colorScheme.surface.withVeil(),
+            surfaceVariant = colorScheme.surfaceVariant.withVeil(0.05f),
+            surfaceDim = colorScheme.surfaceDim.withVeil(0.06f),
+            surfaceBright = colorScheme.surfaceBright.withVeil(0.06f),
+            surfaceContainerLowest = colorScheme.surfaceContainerLowest.withVeil(0.02f),
+            surfaceContainerLow = colorScheme.surfaceContainerLow.withVeil(0.05f),
+            surfaceContainer = colorScheme.surfaceContainer.withVeil(0.08f),
+            surfaceContainerHigh = colorScheme.surfaceContainerHigh.withVeil(0.10f),
+            surfaceContainerHighest = colorScheme.surfaceContainerHighest.withVeil(0.12f),
+        )
+    }
+
     val view = LocalView.current
     SideEffect {
         val activity = view.context as? Activity ?: return@SideEffect
@@ -72,7 +94,7 @@ fun CirnoTheme(content: @Composable () -> Unit) {
     }
 
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = themedScheme,
         typography = Typography(),
         content = content
     )

@@ -1,15 +1,22 @@
 package nep.timeline.cirno.screen
 
 import android.content.Context
-import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,14 +24,21 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
@@ -33,7 +47,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -43,17 +61,19 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
@@ -61,15 +81,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.topjohnwu.superuser.Shell
-import dev.chrisbanes.haze.HazeStyle
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.rememberHazeState
-import nep.timeline.cirno.ApplicationActivity
+import nep.timeline.cirno.BuildConfig
 import nep.timeline.cirno.CommonConstants
-import nep.timeline.cirno.GlobalVars
-import nep.timeline.cirno.MemoryActivity
 import nep.timeline.cirno.R
 import nep.timeline.cirno.client.AppPrefs
 import nep.timeline.cirno.client.RuntimeClient
@@ -81,25 +94,31 @@ import nep.timeline.cirno.utils.PKGUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import kotlin.io.encoding.ExperimentalEncodingApi
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalEncodingApi::class)
+/** 底栏三个页面. */
+private enum class MainTab(val label: String, val icon: ImageVector) {
+    APPS("软件列表", Icons.AutoMirrored.Filled.List),
+    SETTINGS("设置", Icons.Default.Settings),
+    ABOUT("关于", Icons.Default.Info),
+}
+
+/** 应用详情页的入参；详情页不再是独立 Activity，返回动画由 AnimatedContent 统一处理. */
+private data class AppDetailTarget(
+    val appName: String,
+    val packageName: String,
+    val userId: Int,
+)
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen() {
     val handler = Handler(Looper.getMainLooper())
-
-    val hazeState = rememberHazeState()
-    val hazeStyle = HazeStyle(
-        backgroundColor = MaterialTheme.colorScheme.background,
-        tint = HazeTint(MaterialTheme.colorScheme.background.copy(0.67f))
-    )
-
     val context = LocalContext.current
     val packageManager = context.packageManager
 
     fun getInstalledApps(context: Context): List<ApplicationInfo> {
-        val packageManager = context.packageManager
-        return packageManager.getInstalledApplications(PackageManager.GET_META_DATA).filter {
+        val pm = context.packageManager
+        return pm.getInstalledApplications(PackageManager.GET_META_DATA).filter {
             // Google 全家桶默认受保护, 但仍要显示在列表里: 用户可能不使用 FCM,
             // 需要在应用详情里单独打开「允许冻结 Google 服务」.
             CommonConstants.isGoogleFamily(it.packageName) ||
@@ -107,30 +126,20 @@ fun MainScreen() {
         }
     }
 
-    // 读取配置要走 root, 放在 IO 线程, 避免首次进入界面时卡住主线程.
-    // rootOk: 有没有 root 权限; configOk: 配置文件是否已经生成并成功读取.
     val rootOk = remember { mutableStateOf(false) }
     val configOk = remember { mutableStateOf(false) }
     val apps = remember { mutableStateOf<List<ApplicationInfo>>(emptyList()) }
-
-    // 应用名缓存: 搜索时要按名字过滤, 不能在每次输入时对全部应用调 loadLabel (主线程会卡).
     var appLabels by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
-    // 首页搜索: 右上角搜索按钮展开输入框, 支持应用名 / 包名.
-    var searchVisible by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    val searchFocusRequester = remember { FocusRequester() }
-
-    // 启动自动检查更新: 发现新版本时弹提示.
-    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
-
-    // 运行时冻结状态: 状态文件只在模块存活时才有, 读不到就保持 null (界面按「未知」显示, 不能当成「未运行」).
-    var runtime by remember { mutableStateOf<RuntimeState?>(null) }
-
-    // 长按选中的应用, 非 null 时弹出底部设置面板.
+    var tab by remember { mutableStateOf(MainTab.APPS) }
+    var detail by remember { mutableStateOf<AppDetailTarget?>(null) }
     var sheetApp by remember { mutableStateOf<ApplicationInfo?>(null) }
 
-    // 底部面板直接展开到最大高度, 避免折到一半时开关列表被截断.
+    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+    var runtime by remember { mutableStateOf<RuntimeState?>(null) }
+    var backProgress by remember { mutableFloatStateOf(0f) }
+
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     LaunchedEffect(Unit) {
@@ -141,14 +150,12 @@ fun MainScreen() {
         if (hasRoot) {
             configOk.value = withContext(Dispatchers.IO) {
                 runCatching {
-                    // 和配置写队列拿同一把锁, 避免读到还没落盘的旧配置.
                     synchronized(nep.timeline.cirno.configs.ConfigWriter.LOCK) {
                         ConfigManager.manager.readConfigSU()
                     }
                 }.getOrDefault(false)
             }
         }
-        // 应用列表和图标加载也放到 IO 线程, 避免主线程批量 loadIcon 造成首开卡顿.
         val loaded = withContext(Dispatchers.IO) {
             val list = getInstalledApps(context)
             val pm = context.packageManager
@@ -163,7 +170,6 @@ fun MainScreen() {
         }
     }
 
-    // 启动时自动检查更新: 默认 12 小时内只查一次, 失败也记一次, 避免每次打开都走一次网络.
     LaunchedEffect(Unit) {
         if (!AppPrefs.autoCheckUpdate)
             return@LaunchedEffect
@@ -178,12 +184,10 @@ fun MainScreen() {
         (result as? UpdateChecker.Result.Available)?.let { updateInfo = it.info }
     }
 
-    // 轮询运行时状态: 每 2 秒读一次状态文件. 读文件要走 root (SuFile), 必须放 IO 线程.
-    // 只在界面 RESUMED 且没有弹出底部面板时轮询:
-    // - 退到后台 / 锁屏时停掉, 避免持续 root shell 唤醒耗电;
-    // - 面板打开时它自己有一份轮询, 这里不重复读.
-    LaunchedEffect(rootOk.value, sheetApp) {
-        if (!rootOk.value || sheetApp != null)
+    // 首页 / 底栏共用的运行时状态轮询. 打开详情页或长按面板时停掉，
+    // 详情页自己有轮询，避免同时开多个 root shell.
+    LaunchedEffect(rootOk.value, sheetApp, detail) {
+        if (!rootOk.value || sheetApp != null || detail != null)
             return@LaunchedEffect
         val lifecycleOwner = context as? LifecycleOwner ?: return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -196,303 +200,65 @@ fun MainScreen() {
         }
     }
 
-    fun enterAppPage(appName: String, userId: String, packageName: String) {
-        val intent = Intent()
-        intent.setClass(context, ApplicationActivity::class.java)
-
-        intent.putExtra("appName", appName)
-        intent.putExtra("userId", userId)
-        intent.putExtra("packageName", packageName)
-
-        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        context.startActivity(intent)
-    }
-
-    @Composable
-    fun AppItem(appInfo: ApplicationInfo, packageManager: PackageManager) {
-        val appName = remember(appInfo) { appInfo.loadLabel(packageManager).toString() }
-        val appIcon = remember(appInfo) {
-            appInfo.loadIcon(packageManager).toBitmap().asImageBitmap()
-        }
-        val userId = PKGUtils.getUserId(appInfo.uid)
-        // 白名单状态不缓存: 长按面板里改完白名单后, 首页列表在 2 秒内轮询触发重组时能立刻刷新.
-        val white = AppConfigs.isWhiteApp(appInfo.packageName, userId)
-        // Google 服务默认受保护; 用户单独放行后就不显示这个标记.
-        val googleProtected = CommonConstants.isGoogleFamily(appInfo.packageName) &&
-            !AppConfigs.getOptions(appInfo.packageName, userId).allowFreezeGoogle
-
-        // 配置损坏时禁止进应用页 / 长按: 否则白名单开关会用默认值整份覆盖配置, 绕过设置页的写锁.
-        val canOpen = rootOk.value && (configOk.value || !GlobalVars.configCorrupted)
-
-        Row(
-            modifier = if (canOpen)
-                Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-                    .combinedClickable(
-                        onClick = { enterAppPage(appName, userId.toString(), appInfo.packageName) },
-                        onLongClick = { sheetApp = appInfo }
-                    )
-            else
-                Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-        ) {
-            Image(
-                bitmap = appIcon,
-                contentDescription = null,
-                modifier = Modifier.size(48.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = (if (white) "(白名单) " else "") +
-                        (if (googleProtected) "(Google 保护) " else "") + appName,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = when {
-                        white -> Color(0xFF4CAF50)
-                        googleProtected -> Color(0xFFFFA000)
-                        else -> Color.Unspecified
-                    }
-                )
-                Text(
-                    text = (if (userId == 0) "" else "$userId#") + appInfo.packageName,
-                    style = MaterialTheme.typography.bodySmall
-                )
-                AppStatusBadge(
-                    runtime = runtime,
-                    packageName = appInfo.packageName,
-                    userId = userId
-                )
+    // 返回手势: 详情页会跟着手指进度往右移动 (Android 13+ 的预测性返回)，
+    // 松手取消就弹回，完成才真正切回上一页；设置 / 关于页返回软件列表.
+    PredictiveBackHandler(enabled = detail != null || tab != MainTab.APPS) { progress ->
+        try {
+            progress.collect { backProgress = it.progress.coerceIn(0f, 1f) }
+            when {
+                detail != null -> detail = null
+                tab != MainTab.APPS -> tab = MainTab.APPS
             }
+        } finally {
+            backProgress = 0f
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.largeTopAppBarColors(Color.Transparent),
-                modifier = Modifier
-                    .hazeEffect(hazeState) {
-                        style = hazeStyle
-                    }
-                    .fillMaxWidth(),
-                navigationIcon = {
-                    IconButton(onClick = {
-                        context.startActivity(Intent(context, MemoryActivity::class.java))
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "设置",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                },
-                title = {
-                    Box(
-                        Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = stringResource(R.string.app_name),
-                                style = MaterialTheme.typography.headlineSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                // 四态: 已激活 / 有 root 但配置还没生成 / 配置有了但模块没在跑 / 没有 root.
-                                val active = rootOk.value && configOk.value && runtime != null
-                                val dotColor = when {
-                                    active -> Color(0xFF4CAF50)
-                                    rootOk.value -> Color(0xFFFFA000)
-                                    else -> Color.Gray
-                                }
-                                val statusText = when {
-                                    active -> "已激活"
-                                    rootOk.value && configOk.value -> "模块未响应"
-                                    rootOk.value -> "等待模块加载"
-                                    else -> "未激活(需要 root)"
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .size(10.dp)
-                                        .background(color = dotColor, shape = CircleShape)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = statusText,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Text(
-                                text = "by " + stringResource(R.string.app_author) + " · v" + stringResource(R.string.app_version),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = {
-                        searchVisible = !searchVisible
-                        if (!searchVisible)
-                            searchQuery = ""
-                    }) {
-                        Icon(
-                            imageVector = if (searchVisible) Icons.Default.Close else Icons.Default.Search,
-                            contentDescription = if (searchVisible) "关闭搜索" else "搜索应用",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-            )
+    AnimatedContent(
+        targetState = detail,
+        transitionSpec = {
+            if (targetState != null) {
+                (slideInHorizontally { it } + fadeIn()) togetherWith
+                    (slideOutHorizontally { -it / 4 } + fadeOut())
+            } else {
+                (slideInHorizontally { -it / 4 } + fadeIn()) togetherWith
+                    (slideOutHorizontally { it } + fadeOut())
+            }
         },
-    ) { padding ->
-        if (apps.value.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            return@Scaffold
-        }
-
-        Surface(
-            modifier = Modifier.hazeSource(
-                state = hazeState
-            ),
-            color = MaterialTheme.colorScheme.background
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // 搜索过滤: 名字和包名都匹配, 不区分大小写.
-                val filteredApps = remember(apps.value, appLabels, searchQuery) {
-                    val query = searchQuery.trim()
-                    if (query.isEmpty()) {
-                        apps.value
-                    } else {
-                        apps.value.filter { info ->
-                            val label = appLabels[info.packageName] ?: info.packageName
-                            label.contains(query, ignoreCase = true) ||
-                                info.packageName.contains(query, ignoreCase = true)
-                        }
-                    }
-                }
-
-                // 排序:
-                // 1. 可在设置里选择「后台运行的应用优先」: 把当前有存活进程但不在前台的应用排最前面;
-                // 2. 数量多的优先 (后台进程越多越值得注意);
-                // 3. 白名单应用次优先 (和旧版行为一致);
-                // 4. 最后按应用名排序, 方便查找.
-                val sortedApps = remember(filteredApps, runtime, AppPrefs.sortBackgroundFirst) {
-                    val backgroundFirst = AppPrefs.sortBackgroundFirst
-                    filteredApps.sortedWith(
-                        compareBy<ApplicationInfo> { info ->
-                            if (!backgroundFirst) {
-                                0
-                            } else {
-                                val state = RuntimeClient.findApp(runtime, info.packageName, PKGUtils.getUserId(info.uid))
-                                if (state != null && state.liveProcesses > 0 && !state.visible) 0 else 1
-                            }
-                        }.thenByDescending { info ->
-                            if (!backgroundFirst) {
-                                0
-                            } else {
-                                RuntimeClient.findApp(runtime, info.packageName, PKGUtils.getUserId(info.uid))?.liveProcesses ?: 0
-                            }
-                        }.thenByDescending { info ->
-                            AppConfigs.isWhiteApp(info.packageName, PKGUtils.getUserId(info.uid))
-                        }.thenBy { info ->
-                            (appLabels[info.packageName] ?: info.packageName).lowercase()
-                        }
+        label = "detail"
+    ) { target ->
+        if (target == null) {
+            MainTabs(
+                context = context,
+                packageManager = packageManager,
+                apps = apps.value,
+                appLabels = appLabels,
+                searchQuery = searchQuery,
+                onSearchQueryChange = { searchQuery = it },
+                tab = tab,
+                onTabChange = { tab = it },
+                runtime = runtime,
+                rootOk = rootOk.value,
+                configOk = configOk.value,
+                onOpenApp = { info ->
+                    detail = AppDetailTarget(
+                        appName = appLabels[info.packageName] ?: info.packageName,
+                        packageName = info.packageName,
+                        userId = PKGUtils.getUserId(info.uid),
                     )
-                }
-
-                if (searchVisible) {
-                    // 展开搜索时自动聚焦并弹出输入法; 输入框本身在顶栏下方, 不会被键盘挡住.
-                    LaunchedEffect(searchVisible) {
-                        runCatching { searchFocusRequester.requestFocus() }
-                    }
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(
-                                start = 12.dp,
-                                end = 12.dp,
-                                top = padding.calculateTopPadding() + 4.dp,
-                                bottom = 4.dp
-                            )
-                            .focusRequester(searchFocusRequester),
-                        placeholder = { Text("搜索应用名或包名") },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = null
-                            )
-                        },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "清空搜索"
-                                    )
-                                }
-                            }
-                        },
-                        singleLine = true
-                    )
-                }
-
-                if (sortedApps.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "没有匹配的应用",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        //state = listState,
-                        contentPadding = PaddingValues(
-                            top = if (searchVisible) 0.dp else padding.calculateTopPadding(),
-                            bottom = 16.dp
-                        )
-                    ) {
-                        // 用 items() 而不是把所有应用塞进一个 item: LazyColumn 只组合可见项,
-                        // 应用多时不会一次性加载全部图标.
-                        items(
-                            items = sortedApps,
-                            key = { appInfo -> appInfo.uid.toString() + "#" + appInfo.packageName }
-                        ) { appInfo ->
-                            AppItem(appInfo, packageManager)
-                        }
-                    }
-                }
-            }
+                    tab = MainTab.APPS
+                },
+                onLongPressApp = { sheetApp = it },
+            )
+        } else {
+            AppDetailPage(
+                target = target,
+                onBack = { detail = null },
+                backProgress = backProgress,
+            )
         }
     }
 
-    // 长按应用弹出的底部设置面板: 内容和详情页完全一致, 直接复用 AppSettingsContent.
-    // 面板关闭后不需要手动刷新, 首页的轮询会在 2 秒内更新状态徽章.
     sheetApp?.let { app ->
         val appLabel = remember(app) { app.loadLabel(packageManager).toString() }
         ModalBottomSheet(
@@ -507,7 +273,6 @@ fun MainScreen() {
         }
     }
 
-    // 启动时自动检查更新, 有新版就弹提示 (和设置页「检查更新」共用同一个对话框).
     updateInfo?.let { info ->
         UpdateAvailableDialog(
             info = info,
@@ -516,11 +281,401 @@ fun MainScreen() {
     }
 }
 
-/** 应用列表里的冻结状态徽章: 一眼看出每个应用当前是冻结 / 前台 / 后台. */
+/** 三页主界面：顶部搜索 / 标题，底部模块状态 + 三个 Tab. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MainTabs(
+    context: Context,
+    packageManager: PackageManager,
+    apps: List<ApplicationInfo>,
+    appLabels: Map<String, String>,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    tab: MainTab,
+    onTabChange: (MainTab) -> Unit,
+    runtime: RuntimeState?,
+    rootOk: Boolean,
+    configOk: Boolean,
+    onOpenApp: (ApplicationInfo) -> Unit,
+    onLongPressApp: (ApplicationInfo) -> Unit,
+) {
+    Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding(),
+        containerColor = Color.Transparent,
+        topBar = {
+            MainHeader(
+                tab = tab,
+                searchQuery = searchQuery,
+                onSearchQueryChange = onSearchQueryChange,
+            )
+        },
+        bottomBar = {
+            BottomDock(
+                tab = tab,
+                onTabChange = onTabChange,
+                rootOk = rootOk,
+                configOk = configOk,
+                runtime = runtime,
+            )
+        },
+    ) { padding ->
+        AnimatedContent(
+            targetState = tab,
+            transitionSpec = {
+                if (targetState.ordinal > initialState.ordinal) {
+                    (slideInHorizontally { it } + fadeIn()) togetherWith
+                        (slideOutHorizontally { -it / 3 } + fadeOut())
+                } else {
+                    (slideInHorizontally { -it } + fadeIn()) togetherWith
+                        (slideOutHorizontally { it / 3 } + fadeOut())
+                }
+            },
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            label = "tab"
+        ) { target ->
+            when (target) {
+                MainTab.APPS -> AppsTab(
+                    context = context,
+                    packageManager = packageManager,
+                    apps = apps,
+                    appLabels = appLabels,
+                    searchQuery = searchQuery,
+                    runtime = runtime,
+                    onOpenApp = onOpenApp,
+                    onLongPressApp = onLongPressApp,
+                )
+                MainTab.SETTINGS -> SettingsScreen()
+                MainTab.ABOUT -> AboutScreen(
+                    runtime = runtime,
+                    rootOk = rootOk,
+                    configOk = configOk,
+                )
+            }
+        }
+    }
+}
+
+/** 顶部：软件列表页是搜索框，设置 / 关于页是标题；切换时做淡入淡出. */
+@Composable
+private fun MainHeader(
+    tab: MainTab,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.background,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        AnimatedContent(
+            targetState = tab,
+            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            label = "header"
+        ) { target ->
+            Column(
+                modifier = Modifier
+                    .statusBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                when (target) {
+                    MainTab.APPS -> {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = onSearchQueryChange,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp),
+                            placeholder = { Text("搜索应用名 / 包名") },
+                            leadingIcon = {
+                                Icon(Icons.Default.Search, contentDescription = null)
+                            },
+                            trailingIcon = {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { onSearchQueryChange("") }) {
+                                        Icon(Icons.Default.Close, contentDescription = "清空搜索")
+                                    }
+                                }
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(28.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f),
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.86f),
+                            )
+                        )
+                    }
+                    MainTab.SETTINGS -> {
+                        Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
+                            Text(
+                                text = "设置",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "外观 / 背景 / 通用 / 内存回收",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    MainTab.ABOUT -> {
+                        Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
+                            Text(
+                                text = "关于",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "版本 / 激活状态 / 项目链接 / 兼容性",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 底栏：模块名称 + 激活状态 + 三个页面入口. */
+@Composable
+private fun BottomDock(
+    tab: MainTab,
+    onTabChange: (MainTab) -> Unit,
+    rootOk: Boolean,
+    configOk: Boolean,
+    runtime: RuntimeState?,
+) {
+    val active = rootOk && configOk && runtime != null
+    val dotColor = when {
+        active -> Color(0xFF4CAF50)
+        rootOk -> Color(0xFFFFA000)
+        else -> Color.Gray
+    }
+    val statusText = when {
+        active -> "已激活"
+        rootOk && configOk -> "模块未响应"
+        rootOk -> "等待模块加载"
+        else -> "未激活（需要 root）"
+    }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shadowElevation = 8.dp
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.app_name),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .background(dotColor, CircleShape)
+                )
+                Spacer(Modifier.width(5.dp))
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1
+                )
+                Text(
+                    text = "v" + BuildConfig.VERSION_NAME,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            NavigationBar(
+                containerColor = Color.Transparent,
+                tonalElevation = 0.dp
+            ) {
+                MainTab.entries.forEach { item ->
+                    NavigationBarItem(
+                        selected = tab == item,
+                        onClick = { onTabChange(item) },
+                        icon = { Icon(item.icon, contentDescription = item.label) },
+                        label = { Text(item.label) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
+                        )
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 软件列表页. */
+@Composable
+private fun AppsTab(
+    context: Context,
+    packageManager: PackageManager,
+    apps: List<ApplicationInfo>,
+    appLabels: Map<String, String>,
+    searchQuery: String,
+    runtime: RuntimeState?,
+    onOpenApp: (ApplicationInfo) -> Unit,
+    onLongPressApp: (ApplicationInfo) -> Unit,
+) {
+    if (apps.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+        }
+        return
+    }
+
+    val filteredApps = remember(apps, appLabels, searchQuery) {
+        val query = searchQuery.trim()
+        if (query.isEmpty()) {
+            apps
+        } else {
+            apps.filter { info ->
+                val label = appLabels[info.packageName] ?: info.packageName
+                label.contains(query, ignoreCase = true) ||
+                    info.packageName.contains(query, ignoreCase = true)
+            }
+        }
+    }
+
+    val sortedApps = remember(filteredApps, runtime, AppPrefs.sortBackgroundFirst) {
+        val backgroundFirst = AppPrefs.sortBackgroundFirst
+        filteredApps.sortedWith(
+            compareBy<ApplicationInfo> { info ->
+                if (!backgroundFirst) {
+                    0
+                } else {
+                    val state = RuntimeClient.findApp(runtime, info.packageName, PKGUtils.getUserId(info.uid))
+                    if (state != null && state.liveProcesses > 0 && !state.visible) 0 else 1
+                }
+            }.thenByDescending { info ->
+                if (!backgroundFirst) {
+                    0
+                } else {
+                    RuntimeClient.findApp(runtime, info.packageName, PKGUtils.getUserId(info.uid))?.liveProcesses ?: 0
+                }
+            }.thenByDescending { info ->
+                AppConfigs.isWhiteApp(info.packageName, PKGUtils.getUserId(info.uid))
+            }.thenBy { info ->
+                (appLabels[info.packageName] ?: info.packageName).lowercase()
+            }
+        )
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        if (sortedApps.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "没有匹配的应用",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+            ) {
+                items(
+                    items = sortedApps,
+                    key = { appInfo -> appInfo.uid.toString() + "#" + appInfo.packageName }
+                ) { appInfo ->
+                    AppItem(
+                        appInfo = appInfo,
+                        packageManager = packageManager,
+                        runtime = runtime,
+                        onOpen = { onOpenApp(appInfo) },
+                        onLongPress = { onLongPressApp(appInfo) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AppItem(
+    appInfo: ApplicationInfo,
+    packageManager: PackageManager,
+    runtime: RuntimeState?,
+    onOpen: () -> Unit,
+    onLongPress: () -> Unit,
+) {
+    val appName = remember(appInfo) { appInfo.loadLabel(packageManager).toString() }
+    val appIcon = remember(appInfo) {
+        appInfo.loadIcon(packageManager).toBitmap().asImageBitmap()
+    }
+    val userId = PKGUtils.getUserId(appInfo.uid)
+    val white = AppConfigs.isWhiteApp(appInfo.packageName, userId)
+    val googleProtected = CommonConstants.isGoogleFamily(appInfo.packageName) &&
+        !AppConfigs.getOptions(appInfo.packageName, userId).allowFreezeGoogle
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(8.dp)
+            .combinedClickable(
+                onClick = onOpen,
+                onLongClick = onLongPress,
+            )
+    ) {
+        Image(
+            bitmap = appIcon,
+            contentDescription = null,
+            modifier = Modifier.size(48.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = (if (white) "(白名单) " else "") +
+                    (if (googleProtected) "(Google 保护) " else "") + appName,
+                style = MaterialTheme.typography.titleMedium,
+                color = when {
+                    white -> Color(0xFF4CAF50)
+                    googleProtected -> Color(0xFFFFA000)
+                    else -> Color.Unspecified
+                }
+            )
+            Text(
+                text = (if (userId == 0) "" else "$userId#") + appInfo.packageName,
+                style = MaterialTheme.typography.bodySmall
+            )
+            AppStatusBadge(
+                runtime = runtime,
+                packageName = appInfo.packageName,
+                userId = userId
+            )
+        }
+    }
+}
+
+/** 应用列表里的冻结状态徽章. */
 @Composable
 private fun AppStatusBadge(runtime: RuntimeState?, packageName: String, userId: Int) {
-    // 读不到状态文件 = 模块没在运行 / 状态未知. 此时不显示徽章, 顶部状态栏已经有提示,
-    // 不能把「未知」显示成「未运行」.
     if (runtime == null)
         return
 
@@ -542,13 +697,68 @@ private fun AppStatusBadge(runtime: RuntimeState?, packageName: String, userId: 
         Box(
             modifier = Modifier
                 .size(6.dp)
-                .background(color = color, shape = CircleShape)
+                .background(color, CircleShape)
         )
         Spacer(modifier = Modifier.width(4.dp))
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall,
             color = color
+        )
+    }
+}
+
+/** 应用详情页（原独立 Activity 改为内部页面，返回键和手势都能触发动画）. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AppDetailPage(
+    target: AppDetailTarget,
+    onBack: () -> Unit,
+    backProgress: Float,
+) {
+    Scaffold(
+        modifier = Modifier.graphicsLayer {
+            translationX = backProgress * size.width * 0.32f
+            alpha = 1f - backProgress * 0.12f
+        },
+        containerColor = Color.Transparent,
+        topBar = {
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                ),
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                title = {
+                    Column {
+                        Text(
+                            text = target.appName + (if (target.userId == 0) "" else "#${target.userId}"),
+                            style = MaterialTheme.typography.titleLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = target.packageName,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        AppSettingsContent(
+            appName = target.appName,
+            packageName = target.packageName,
+            userId = target.userId,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
         )
     }
 }

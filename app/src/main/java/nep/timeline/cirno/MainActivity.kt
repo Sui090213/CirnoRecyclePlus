@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import nep.timeline.cirno.screen.MainScreen
+import nep.timeline.cirno.ui.AppBackground
 import nep.timeline.cirno.ui.CirnoTheme
 
 class MainActivity : ComponentActivity() {
@@ -13,7 +14,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             CirnoTheme {
-                MainScreen()
+                AppBackground {
+                    MainScreen()
+                }
             }
         }
     }

@@ -19,8 +19,8 @@ configure<ApplicationExtension> {
         applicationId = "com.flyingr.cirnorecycle"
         minSdk = 31
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.2.3"
+        versionCode = 8
+        versionName = "1.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -76,6 +76,8 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    // 底部三页 / 应用详情页切换需要 AnimatedContent；material3 只带 animation-core.
+    implementation("androidx.compose.animation:animation")
     implementation(libs.androidx.material.icons.core)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

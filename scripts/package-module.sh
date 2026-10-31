@@ -64,7 +64,7 @@ command -v zip >/dev/null 2>&1 || {
 }
 
 VERSION="$(grep -E '^\s*version\s*=' "$MODULE_DIR/module.prop" | head -n1 | cut -d= -f2 | tr -d ' \r' | sed 's/^[vV]//')"
-[ -n "$VERSION" ] || VERSION="1.2.3"
+[ -n "$VERSION" ] || VERSION="1.3.1"
 
 ZIP_NAME="Cirno-Recycle-Plus-v${VERSION}.zip"
 ZIP_PATH="$OUTPUT_DIR/$ZIP_NAME"
