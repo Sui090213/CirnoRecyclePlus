@@ -31,6 +31,7 @@ object AppPrefs {
     private const val KEY_BG_DIM = "background_dim"
     private const val KEY_BG_PRESET = "background_preset"
     private const val KEY_BG_IMAGE = "background_image"
+    private const val KEY_BG_HASH = "background_image_sha256"
 
     /** 默认主题色: 雪蓝 (和图标里的冰蓝色接近). */
     const val DEFAULT_SEED = 0xFF4A90D9.toInt()
@@ -81,6 +82,15 @@ object AppPrefs {
     var backgroundImagePath by mutableStateOf<String?>(null)
         private set
 
+    /**
+     * 背景文件的 SHA-256. 导入时记录, 加载前校验.
+     *
+     * <p>除了安全校验, 它同时充当「背景版本号」: 换一张图时即使保存路径不变,
+     * 哈希也会变, 背景解码层就能重新加载, 不会继续显示旧图.
+     */
+    var backgroundImageHash by mutableStateOf<String?>(null)
+        private set
+
     /** 初始化 (进程内只做一次). 在 Application / Activity 启动时调用. */
     @Synchronized
     fun init(context: Context) {
@@ -100,6 +110,7 @@ object AppPrefs {
         backgroundDim = p.getFloat(KEY_BG_DIM, 0.20f).coerceIn(0f, 0.8f)
         backgroundPreset = p.getInt(KEY_BG_PRESET, 0).coerceIn(0, 4)
         backgroundImagePath = p.getString(KEY_BG_IMAGE, null)
+        backgroundImageHash = p.getString(KEY_BG_HASH, null)
     }
 
     fun updateThemeMode(value: ThemeMode) {
@@ -189,19 +200,45 @@ object AppPrefs {
         edit { it.putFloat(KEY_BG_DIM, backgroundDim) }
     }
 
-    /** 设置自定义背景图片路径; 传 null 表示移除图片, 只保留内置渐变. */
-    fun updateBackgroundImage(path: String?) {
+    /**
+     * 设置自定义背景图片路径和哈希; 传 null 表示移除图片, 只保留内置渐变.
+     *
+     * <p>哈希除了用于加载前校验, 也作为背景的「版本」: 保存路径固定为同一个文件,
+     * 只改路径字符串不会触发 Compose 重新加载, 但哈希变化会.
+     */
+    fun updateBackgroundImage(path: String?, sha256: String? = null) {
         backgroundImagePath = path
+        backgroundImageHash = sha256
         if (path != null) {
             backgroundPreset = 0
             backgroundEnabled = true
             edit {
                 it.putString(KEY_BG_IMAGE, path)
+                if (sha256 != null)
+                    it.putString(KEY_BG_HASH, sha256)
+                else
+                    it.remove(KEY_BG_HASH)
                 it.putInt(KEY_BG_PRESET, 0)
                 it.putBoolean(KEY_BG_ENABLED, true)
             }
         } else {
-            edit { it.remove(KEY_BG_IMAGE) }
+            edit {
+                it.remove(KEY_BG_IMAGE)
+                it.remove(KEY_BG_HASH)
+            }
+        }
+    }
+
+    /** 旧版本没有记录哈希时, 首次加载后补记一次, 避免之后每次都被当成「无基线」. */
+    fun updateBackgroundImageHash(sha256: String?) {
+        if (backgroundImageHash == sha256)
+            return
+        backgroundImageHash = sha256
+        edit {
+            if (sha256 != null)
+                it.putString(KEY_BG_HASH, sha256)
+            else
+                it.remove(KEY_BG_HASH)
         }
     }
 
@@ -211,6 +248,47 @@ object AppPrefs {
     /** 记录一次检查更新 (不管成功还是失败, 都算检查过, 避免失败时每次开 App 都重试). */
     fun markUpdateChecked(at: Long = System.currentTimeMillis()) {
         edit { it.putLong(KEY_LAST_UPDATE_CHECK, at) }
+    }
+
+    /** 导出 / 导入用的界面偏好快照 (不含背景图片路径, 图片文件无法跨设备搬运). */
+    data class UiPrefsSnapshot(
+        val themeMode: Int,
+        val monetEnabled: Boolean,
+        val themeSeed: Int,
+        val autoCheckUpdate: Boolean,
+        val sortBackgroundFirst: Boolean,
+        val showInactiveProcesses: Boolean,
+        val backgroundEnabled: Boolean,
+        val backgroundAlpha: Float,
+        val backgroundDim: Float,
+        val backgroundPreset: Int,
+    )
+
+    fun snapshot(): UiPrefsSnapshot = UiPrefsSnapshot(
+        themeMode = themeMode.value,
+        monetEnabled = monetEnabled,
+        themeSeed = themeSeed,
+        autoCheckUpdate = autoCheckUpdate,
+        sortBackgroundFirst = sortBackgroundFirst,
+        showInactiveProcesses = showInactiveProcesses,
+        backgroundEnabled = backgroundEnabled,
+        backgroundAlpha = backgroundAlpha,
+        backgroundDim = backgroundDim,
+        backgroundPreset = backgroundPreset,
+    )
+
+    /** 应用导入的界面偏好; 非法值会被夹到安全范围. */
+    fun restoreSnapshot(snapshot: UiPrefsSnapshot) {
+        updateThemeMode(ThemeMode.fromValue(snapshot.themeMode))
+        updateMonetEnabled(snapshot.monetEnabled)
+        updateThemeSeed(snapshot.themeSeed)
+        updateAutoCheckUpdate(snapshot.autoCheckUpdate)
+        updateSortBackgroundFirst(snapshot.sortBackgroundFirst)
+        updateShowInactiveProcesses(snapshot.showInactiveProcesses)
+        updateBackgroundEnabled(snapshot.backgroundEnabled)
+        updateBackgroundAlpha(snapshot.backgroundAlpha)
+        updateBackgroundDim(snapshot.backgroundDim)
+        updateBackgroundPreset(snapshot.backgroundPreset)
     }
 
     private fun edit(block: (SharedPreferences.Editor) -> Unit) {

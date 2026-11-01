@@ -66,8 +66,11 @@ fi
 # 开机后再应用一次 millet 兼容模式: post-fs-data 时如果内核模块已经加载，
 # rmmod 可能失败；这里等系统起来后再试一次，并记录结果.
 if [ -f "$MODDIR/millet_ctl.sh" ] && [ -f "$MODDIR/millet_disabled" ]; then
-    sh "$MODDIR/millet_ctl.sh" boot >>"$LOG" 2>&1
-    log "millet 兼容模式: 已应用 (重启后完全生效)"
+    if sh "$MODDIR/millet_ctl.sh" boot >>"$LOG" 2>&1; then
+        log "millet 兼容模式: 已应用 (重启后完全生效)"
+    else
+        log "millet 兼容模式: 应用失败，已保留备份，下次开机会重试"
+    fi
 fi
 
 log "service.sh 执行完毕"

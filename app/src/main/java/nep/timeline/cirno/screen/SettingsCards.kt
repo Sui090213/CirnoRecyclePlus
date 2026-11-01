@@ -283,6 +283,7 @@ fun XiaomiCompatCard() {
     var status by remember { mutableStateOf<MilletControl.Status?>(null) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    var messageIsError by remember { mutableStateOf(false) }
 
     fun refresh() {
         scope.launch {
@@ -295,22 +296,39 @@ fun XiaomiCompatCard() {
             return
         busy = true
         message = null
+        messageIsError = false
         scope.launch {
             val result = if (disable) MilletControl.disable() else MilletControl.enable()
             busy = false
-            if (result.ok) {
-                val text = if (disable)
-                    "已禁用系统 millet，重启后完全生效"
-                else
-                    "已恢复系统 millet，重启后完全生效"
-                message = text
-                Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
-                status = withContext(Dispatchers.IO) { MilletControl.status() }
-            } else {
-                val text = "操作失败: " + result.output.take(300)
-                message = text
-                Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+            when {
+                result.ok -> {
+                    val text = if (disable)
+                        "已禁用系统 millet，重启后完全生效"
+                    else
+                        "已恢复系统 millet，重启后完全生效"
+                    message = text
+                    messageIsError = false
+                    Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+                }
+                result.partial -> {
+                    val text = when {
+                        disable -> "属性已禁用，但覆盖文件没有写全；重启时会再试"
+                        result.output.contains("PROPS_RESTORED=0") ->
+                            "覆盖文件和标记已清理，但没有属性备份，persist 属性未能还原"
+                        else -> "属性已恢复，但部分覆盖文件没有删干净；建议重启后重试"
+                    }
+                    message = text
+                    messageIsError = true
+                    Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+                }
+                else -> {
+                    val text = "操作失败: " + result.output.take(300)
+                    message = text
+                    messageIsError = true
+                    Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+                }
             }
+            status = withContext(Dispatchers.IO) { MilletControl.status() }
         }
     }
 
@@ -319,7 +337,8 @@ fun XiaomiCompatCard() {
     SettingsCard("小米 millet 兼容") {
         Text(
             text = "MIUI / HyperOS 自带的 millet（Greeze）冻结服务和本模块会互相抢后台进程，" +
-                "导致反复冻结 / 解冻、功耗升高。模块会在刷入时自动检测并处理，也可以在这里手动切换。",
+                "导致反复冻结 / 解冻、功耗升高。模块会在刷入时区分「只是存在」和「正在运行」，" +
+                "只有检测到运行中的 millet 才会自动禁用；也可以在这里手动切换。",
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -349,13 +368,26 @@ fun XiaomiCompatCard() {
             }
             else -> {
                 Text(
-                    text = "系统 millet：" + if (current.detected) "已检测到" else "未检测到",
+                    text = when {
+                        !current.present -> "系统 millet：未检测到"
+                        current.active -> "系统 millet：已检测到，正在运行"
+                        else -> "系统 millet：检测到文件 / 属性，当前未运行"
+                    },
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "当前状态：" + if (current.disabled) "已禁用（重启后完全生效）" else "未禁用",
+                    text = when {
+                        current.disabled -> "当前状态：已禁用（重启后完全生效）"
+                        current.conflict -> "冲突判定：会与本模块抢后台进程"
+                        current.present -> "冲突判定：当前未运行，暂不判定为冲突"
+                        else -> "当前状态：未禁用"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (current.disabled) MaterialTheme.colorScheme.primary else Color.Unspecified
+                    color = when {
+                        current.disabled -> MaterialTheme.colorScheme.primary
+                        current.conflict -> MaterialTheme.colorScheme.error
+                        else -> Color.Unspecified
+                    }
                 )
                 if (current.kernelLoaded) {
                     Text(
@@ -373,7 +405,7 @@ fun XiaomiCompatCard() {
                 }
                 if (current.backup) {
                     Text(
-                        text = "已保存原始属性，恢复时会按备份还原。",
+                        text = "已保存原始属性，恢复时会按备份还原；恢复失败会保留备份。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -386,7 +418,7 @@ fun XiaomiCompatCard() {
                 ) {
                     Button(
                         onClick = { apply(true) },
-                        enabled = !busy && !current.disabled,
+                        enabled = !busy && !current.disabled && current.present,
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(if (busy) "处理中…" else "一键禁用 millet")
@@ -407,7 +439,8 @@ fun XiaomiCompatCard() {
             Text(
                 text = it,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
+                color = if (messageIsError) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.primary
             )
         }
 

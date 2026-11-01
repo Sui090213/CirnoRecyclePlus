@@ -3,9 +3,7 @@ package nep.timeline.cirno.screen
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +21,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -37,11 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -50,14 +45,6 @@ import nep.timeline.cirno.client.AppPrefs
 import nep.timeline.cirno.client.BackgroundStore
 import nep.timeline.cirno.ui.BackgroundArtwork
 import nep.timeline.cirno.ui.BUILTIN_BACKGROUNDS
-import java.net.HttpURLConnection
-import java.net.URL
-
-/** 在线图库的固定种子，点缩略图时下载同一张的大图；都来自 Lorem Picsum（开源免费）. */
-private val ONLINE_WALLPAPERS = (1..6).map { index ->
-    "https://picsum.photos/seed/cirno-$index/1080/2400" to
-        "https://picsum.photos/seed/cirno-$index/240/420"
-}
 
 /**
  * 自定义背景设置卡.
@@ -65,7 +52,7 @@ private val ONLINE_WALLPAPERS = (1..6).map { index ->
  * <p>支持三种来源：
  * <ul>
  *     <li>本地相册 / 文件选择器（图片会复制到应用私有目录，不依赖临时权限）；</li>
- *     <li>网络链接（http/https，限制 32MB）；</li>
+ *     <li>网络链接 / 在线图库（下载后限制 32MB，并记录 SHA-256 用于加载时校验）；</li>
  *     <li>内置渐变（不联网也能用）。</li>
  * </ul>
  *
@@ -79,8 +66,10 @@ fun BackgroundSettingsCard() {
 
     var busy by remember { mutableStateOf(false) }
     var showUrlDialog by remember { mutableStateOf(false) }
+    var showGallery by remember { mutableStateOf(false) }
     var urlInput by remember { mutableStateOf("") }
     var urlError by remember { mutableStateOf<String?>(null) }
+    var integrityError by remember { mutableStateOf<String?>(null) }
 
     fun toast(text: String) = Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
 
@@ -89,12 +78,13 @@ fun BackgroundSettingsCard() {
             return
         busy = true
         scope.launch {
-            val path = withContext(Dispatchers.IO) {
+            val saved = withContext(Dispatchers.IO) {
                 runCatching { BackgroundStore.importFromUri(context, uri) }.getOrNull()
             }
             busy = false
-            if (path != null) {
-                AppPrefs.updateBackgroundImage(path)
+            if (saved != null) {
+                AppPrefs.updateBackgroundImage(saved.path, saved.sha256)
+                integrityError = null
                 toast("背景已应用")
             } else {
                 toast("图片读取失败，换一张试试")
@@ -113,12 +103,13 @@ fun BackgroundSettingsCard() {
         busy = true
         urlError = null
         scope.launch {
-            val path = withContext(Dispatchers.IO) {
+            val saved = withContext(Dispatchers.IO) {
                 runCatching { BackgroundStore.importFromUrl(context, trimmed) }.getOrNull()
             }
             busy = false
-            if (path != null) {
-                AppPrefs.updateBackgroundImage(path)
+            if (saved != null) {
+                AppPrefs.updateBackgroundImage(saved.path, saved.sha256)
+                integrityError = null
                 showUrlDialog = false
                 toast("在线背景已下载并应用")
             } else {
@@ -132,6 +123,23 @@ fun BackgroundSettingsCard() {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null)
             importUri(uri)
+    }
+
+    // 文件级校验: 加载前先看 SHA-256 是否和导入时记录的一致.
+    LaunchedEffect(AppPrefs.backgroundImagePath, AppPrefs.backgroundImageHash) {
+        val path = AppPrefs.backgroundImagePath
+        if (path.isNullOrBlank()) {
+            integrityError = null
+            return@LaunchedEffect
+        }
+        val status = withContext(Dispatchers.IO) {
+            BackgroundStore.verifyHash(path, AppPrefs.backgroundImageHash)
+        }
+        integrityError = when (status) {
+            false -> "背景文件哈希校验失败，文件可能已被替换或写坏；请重新选择背景。"
+            null -> "背景文件不存在，请重新选择背景。"
+            true -> null
+        }
     }
 
     SettingsCard("自定义背景") {
@@ -163,10 +171,12 @@ fun BackgroundSettingsCard() {
         ) {
             BackgroundArtwork(
                 path = AppPrefs.backgroundImagePath,
+                expectedSha256 = AppPrefs.backgroundImageHash,
                 preset = AppPrefs.backgroundPreset,
                 alpha = AppPrefs.backgroundAlpha,
                 dim = AppPrefs.backgroundDim,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                onIntegrityError = { error -> integrityError = error },
             )
             if (AppPrefs.backgroundImagePath.isNullOrBlank() && AppPrefs.backgroundPreset == 0) {
                 Box(
@@ -192,6 +202,15 @@ fun BackgroundSettingsCard() {
                     CircularProgressIndicator()
                 }
             }
+        }
+
+        integrityError?.let {
+            Spacer(Modifier.size(6.dp))
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
         }
 
         Spacer(Modifier.size(8.dp))
@@ -233,11 +252,19 @@ fun BackgroundSettingsCard() {
             style = MaterialTheme.typography.bodyLarge
         )
         Spacer(Modifier.size(4.dp))
+        // 选择内置渐变时清掉自定义图片: 否则 BackgroundArtwork 会优先画旧图片,
+        // 用户会以为"选了渐变没反应".
+        fun selectPreset(preset: Int) {
+            BackgroundStore.clear(context)
+            AppPrefs.updateBackgroundImage(null)
+            AppPrefs.updateBackgroundPreset(preset)
+            integrityError = null
+        }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
                 FilterChip(
                     selected = AppPrefs.backgroundPreset == 0 && AppPrefs.backgroundImagePath.isNullOrBlank(),
-                    onClick = { AppPrefs.updateBackgroundPreset(0) },
+                    onClick = { selectPreset(0) },
                     label = { Text("无") }
                 )
             }
@@ -245,7 +272,7 @@ fun BackgroundSettingsCard() {
                 val preset = index + 1
                 FilterChip(
                     selected = AppPrefs.backgroundPreset == preset,
-                    onClick = { AppPrefs.updateBackgroundPreset(preset) },
+                    onClick = { selectPreset(preset) },
                     label = { Text(BUILTIN_BACKGROUNDS[index].name) }
                 )
             }
@@ -253,19 +280,21 @@ fun BackgroundSettingsCard() {
 
         Spacer(Modifier.size(12.dp))
         Text(
-            text = "在线图库 (Lorem Picsum · 点击下载并应用)",
+            text = "在线图库",
             style = MaterialTheme.typography.bodyLarge
         )
+        Spacer(Modifier.size(4.dp))
+        Text(
+            text = "从 Wallhaven / Lorem Picsum 在线搜索、翻页选择，下载后保存到本地并记录 SHA-256。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         Spacer(Modifier.size(6.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(ONLINE_WALLPAPERS.size) { index ->
-                val (full, thumb) = ONLINE_WALLPAPERS[index]
-                OnlineThumbnail(
-                    url = thumb,
-                    enabled = !busy,
-                    onClick = { importUrl(full) }
-                )
-            }
+        OutlinedButton(
+            onClick = { showGallery = true },
+            enabled = !busy
+        ) {
+            Text("打开在线图库")
         }
 
         Spacer(Modifier.size(12.dp))
@@ -350,58 +379,14 @@ fun BackgroundSettingsCard() {
             }
         )
     }
-}
 
-/** 在线图库缩略图：进入设置页时才按需下载，失败显示占位块. */
-@Composable
-private fun OnlineThumbnail(
-    url: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    var image by remember(url) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(url) {
-        image = withContext(Dispatchers.IO) {
-            runCatching {
-                val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 10_000
-                    readTimeout = 15_000
-                    setRequestProperty("User-Agent", "CirnoRecyclePlus/Background")
-                }
-                try {
-                    if (connection.responseCode !in 200..299)
-                        return@runCatching null
-                    android.graphics.BitmapFactory.decodeStream(connection.inputStream)?.asImageBitmap()
-                } finally {
-                    connection.disconnect()
-                }
-            }.getOrNull()
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .size(width = 72.dp, height = 118.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        val bitmap = image
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            Text(
-                text = "在线",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.Medium
-            )
-        }
+    if (showGallery) {
+        OnlineGalleryDialog(
+            onDismiss = { showGallery = false },
+            onApplied = {
+                showGallery = false
+                integrityError = null
+            }
+        )
     }
 }

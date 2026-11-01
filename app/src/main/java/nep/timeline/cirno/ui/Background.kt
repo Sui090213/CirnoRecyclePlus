@@ -17,7 +17,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import nep.timeline.cirno.client.AppPrefs
@@ -83,6 +82,7 @@ fun AppBackground(content: @Composable () -> Unit) {
             )
             BackgroundArtwork(
                 path = AppPrefs.backgroundImagePath,
+                expectedSha256 = AppPrefs.backgroundImageHash,
                 preset = AppPrefs.backgroundPreset,
                 alpha = AppPrefs.backgroundAlpha,
                 dim = AppPrefs.backgroundDim,
@@ -96,26 +96,48 @@ fun AppBackground(content: @Composable () -> Unit) {
 /**
  * 只画背景层，不包内容；设置页的预览也用它.
  *
+ * @param expectedSha256 背景文件 SHA-256；为空表示旧版本还没有基线, 首次加载后会自动补写
+ * @param onIntegrityError 文件哈希不匹配时回调, 设置页用它显示错误; 为 null 时静默回退
  * @param alpha 图片 / 渐变的不透明度
  * @param dim 背景压暗程度，0..0.8
  */
 @Composable
 fun BackgroundArtwork(
     path: String?,
+    expectedSha256: String?,
     preset: Int,
     alpha: Float,
     dim: Float,
     modifier: Modifier = Modifier,
+    onIntegrityError: ((String?) -> Unit)? = null,
 ) {
-    val context = LocalContext.current
-    var bitmap by remember(path) { mutableStateOf<ImageBitmap?>(null) }
+    var bitmap by remember(path, expectedSha256) { mutableStateOf<ImageBitmap?>(null) }
 
-    LaunchedEffect(path) {
-        bitmap = if (path.isNullOrBlank()) {
-            null
-        } else {
-            withContext(Dispatchers.IO) { BackgroundStore.loadImage(path) }
+    // 注意: key 同时包含 path 和 hash. 背景文件路径固定为 custom_background.jpg,
+    // 换图时路径不变, 只有 hash 会变; 只用 path 做 key 会继续显示旧图.
+    LaunchedEffect(path, expectedSha256) {
+        if (path.isNullOrBlank()) {
+            bitmap = null
+            return@LaunchedEffect
         }
+        val loaded = withContext(Dispatchers.IO) {
+            BackgroundStore.loadImage(path, expectedSha256)
+        }
+        if (loaded == null) {
+            bitmap = null
+            onIntegrityError?.invoke("背景文件不存在或无法读取")
+            return@LaunchedEffect
+        }
+        if (!loaded.hashMatched) {
+            bitmap = null
+            onIntegrityError?.invoke("背景文件哈希校验失败，文件可能已被替换或写坏")
+            return@LaunchedEffect
+        }
+        onIntegrityError?.invoke(null)
+        // 老版本没有记录哈希: 第一次成功加载后补写基线.
+        if (expectedSha256.isNullOrBlank() && loaded.actualHash != null)
+            AppPrefs.updateBackgroundImageHash(loaded.actualHash)
+        bitmap = loaded.bitmap
     }
 
     Box(modifier = modifier) {

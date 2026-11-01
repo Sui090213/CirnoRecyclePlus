@@ -28,6 +28,24 @@ object BackgroundStore {
     private const val MAX_EDGE = 2560
     private const val MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024
 
+    /** 保存成功后的结果. */
+    data class SavedBackground(
+        val path: String,
+        val sha256: String,
+    )
+
+    /**
+     * 加载结果.
+     *
+     * <p>[hashMatched] 为 false 表示文件哈希和 [AppPrefs.backgroundImageHash] 对不上,
+     * 此时 [bitmap] 为 null, 调用方应提示用户重新选择背景.
+     */
+    data class LoadedBackground(
+        val bitmap: ImageBitmap?,
+        val actualHash: String?,
+        val hashMatched: Boolean,
+    )
+
     /** 自定义背景文件的绝对路径；文件不存在时返回 null. */
     fun currentFile(context: Context): File {
         val file = File(context.filesDir, FILE_NAME)
@@ -37,9 +55,9 @@ object BackgroundStore {
     /**
      * 从 content:// / file:// 导入一张图片.
      *
-     * @return 保存后的文件路径; 失败返回 null.
+     * @return 保存后的文件路径 + SHA-256; 失败返回 null.
      */
-    fun importFromUri(context: Context, uri: Uri): String? {
+    fun importFromUri(context: Context, uri: Uri): SavedBackground? {
         return runCatching {
             val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
                 applyTargetSize(decoder, info.size.width, info.size.height)
@@ -53,7 +71,7 @@ object BackgroundStore {
      *
      * <p>只支持 http/https，限制 32MB，避免误填链接把内存吃满.
      */
-    fun importFromUrl(context: Context, rawUrl: String): String? {
+    fun importFromUrl(context: Context, rawUrl: String, referer: String? = null): SavedBackground? {
         return runCatching {
             val url = URL(rawUrl.trim())
             require(url.protocol == "https") { "只支持 https 图片链接" }
@@ -62,6 +80,8 @@ object BackgroundStore {
                 readTimeout = 30_000
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "CirnoRecyclePlus/Background")
+                if (!referer.isNullOrBlank())
+                    setRequestProperty("Referer", referer)
             }
             try {
                 if (connection.responseCode !in 200..299)
@@ -92,14 +112,33 @@ object BackgroundStore {
         }.getOrNull()
     }
 
-    /** 读取已保存的背景图，按最长边 [maxEdge] 采样，避免大图占用过多内存. */
-    fun loadImage(path: String?, maxEdge: Int = 2048): ImageBitmap? {
+    /**
+     * 读取已保存的背景图，按最长边 [maxEdge] 采样，避免大图占用过多内存.
+     *
+     * <p>读取前先校验 [expectedSha256]；老版本没有记录哈希时接受当前文件并返回实际哈希,
+     * 由调用方补写基线.
+     */
+    fun loadImage(
+        path: String?,
+        expectedSha256: String?,
+        maxEdge: Int = 2048,
+    ): LoadedBackground? {
         if (path.isNullOrBlank())
             return null
         val file = File(path)
         if (!file.isFile || file.length() <= 0L)
             return null
-        return runCatching {
+
+        val actualHash = Sha256.file(file) ?: return null
+        if (!expectedSha256.isNullOrBlank() && !Sha256.matches(expectedSha256, actualHash)) {
+            return LoadedBackground(
+                bitmap = null,
+                actualHash = actualHash,
+                hashMatched = false,
+            )
+        }
+
+        val bitmap = runCatching {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(path, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0)
@@ -113,6 +152,29 @@ object BackgroundStore {
             }
             BitmapFactory.decodeFile(path, options)?.asImageBitmap()
         }.getOrNull()
+
+        return LoadedBackground(
+            bitmap = bitmap,
+            actualHash = actualHash,
+            hashMatched = true,
+        )
+    }
+
+    /**
+     * 只校验文件哈希, 不 Decode; 供设置页显示「背景文件是否被替换」.
+     *
+     * @return true 校验通过 / 还没有基线; false 哈希不匹配; null 文件不存在.
+     */
+    fun verifyHash(path: String?, expectedSha256: String?): Boolean? {
+        if (path.isNullOrBlank())
+            return null
+        val file = File(path)
+        if (!file.isFile || file.length() <= 0L)
+            return null
+        val actual = Sha256.file(file) ?: return null
+        if (expectedSha256.isNullOrBlank())
+            return true
+        return Sha256.matches(expectedSha256, actual)
     }
 
     /** 删除自定义背景文件. */
@@ -143,7 +205,7 @@ object BackgroundStore {
         }
     }
 
-    private fun save(context: Context, bitmap: Bitmap): String {
+    private fun save(context: Context, bitmap: Bitmap): SavedBackground {
         val file = File(context.filesDir, FILE_NAME)
         val temp = File(context.filesDir, "$FILE_NAME.tmp")
         temp.outputStream().use { output ->
@@ -152,6 +214,8 @@ object BackgroundStore {
         if (file.exists() && !file.delete())
             error("无法覆盖旧背景")
         check(temp.renameTo(file)) { "背景保存失败" }
-        return file.absolutePath
+
+        val sha256 = Sha256.file(file) ?: error("无法计算背景文件哈希")
+        return SavedBackground(file.absolutePath, sha256)
     }
 }

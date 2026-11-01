@@ -19,8 +19,8 @@ configure<ApplicationExtension> {
         applicationId = "com.flyingr.cirnorecycle"
         minSdk = 31
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.3.1"
+        versionCode = 10
+        versionName = "1.4.0-beta.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

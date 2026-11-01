@@ -19,18 +19,28 @@ object MilletControl {
         val root: Boolean = false,
         val moduleInstalled: Boolean = false,
         val xiaomi: Boolean = false,
-        val detected: Boolean = false,
+        /** 设备上存在 millet 文件 / 属性 / 服务（不代表正在运行）. */
+        val present: Boolean = false,
+        /** millet 当前正在运行（内核模块加载 / Greeze 服务 / 相关属性为 true）. */
+        val active: Boolean = false,
+        /** 正在运行且尚未被本模块禁用，会与本模块冲突. */
+        val conflict: Boolean = false,
         val disabled: Boolean = false,
         val otherModule: Boolean = false,
         val kernelLoaded: Boolean = false,
         val backup: Boolean = false,
         val raw: String = "",
-    )
+    ) {
+        /** 兼容旧 UI / 旧字段. */
+        val detected: Boolean get() = present
+    }
 
     data class ActionResult(
         val ok: Boolean,
         val output: String,
         val disabled: Boolean?,
+        /** 命令退出码 0，但脚本报告了部分失败（例如属性已改、覆盖文件没写全）. */
+        val partial: Boolean = false,
     )
 
     suspend fun status(): Status = withContext(Dispatchers.IO) {
@@ -54,7 +64,9 @@ object MilletControl {
             root = true,
             moduleInstalled = values["MODULE"] == "1",
             xiaomi = values["XIAOMI"] == "1",
-            detected = values["MILLET_DETECTED"] == "1",
+            present = values["MILLET_PRESENT"] == "1" || values["MILLET_DETECTED"] == "1",
+            active = values["MILLET_ACTIVE"] == "1",
+            conflict = values["CONFLICT"] == "1",
             disabled = values["MILLET_DISABLED"] == "1",
             otherModule = values["OTHER_MODULE"] == "1",
             kernelLoaded = values["KERNEL_LOADED"] == "1",
@@ -85,10 +97,15 @@ object MilletControl {
             output.contains("DISABLED=0") -> false
             else -> null
         }
-        ActionResult(
-            ok = result.code == 0 && !output.contains("MODULE=0"),
+        val errorLine = output.lineSequence().firstOrNull { it.startsWith("ERROR=") }
+        val failed = result.code != 0 || output.contains("MODULE=0")
+        val missingPropsBackup = action == "enable" && output.contains("PROPS_RESTORED=0")
+        return@withContext ActionResult(
+            ok = !failed && errorLine == null && !missingPropsBackup,
             output = if (output.isBlank()) "脚本没有输出" else output,
             disabled = disabled,
+            // 退出码 0 但有 ERROR / 没有属性备份: 属性可能没完全恢复, 但仍算部分成功.
+            partial = !failed && (errorLine != null || missingPropsBackup),
         )
     }
 }

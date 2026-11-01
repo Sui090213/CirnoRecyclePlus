@@ -462,6 +462,14 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                     checkingUpdate = checkingUpdate,
                     onCheckUpdate = { checkUpdateNow() }
                 )
+                ConfigBackupCard(
+                    onImported = {
+                        // 导入会替换 GlobalVars 里的配置对象, 这里同步刷新界面状态.
+                        config = loadUiConfig()
+                        writesLocked = GlobalVars.configCorrupted
+                        errorText = null
+                    }
+                )
 
                 if (current == null) {
                     LoadingCard(errorText)

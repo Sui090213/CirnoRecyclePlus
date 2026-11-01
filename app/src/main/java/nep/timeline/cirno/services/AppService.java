@@ -28,7 +28,9 @@ public class AppService {
         if (applicationInfo == null)
             return null;
 
-        return appRecords.put(packageName, new AppRecord(applicationInfo));
+        // 注意: ConcurrentHashMap.put 返回的是「旧值」, 不是刚插入的值.
+        // 这里必须用 computeIfAbsent, 保证第一次查询也能拿到新创建的 AppRecord.
+        return appRecords.computeIfAbsent(packageName, key -> new AppRecord(applicationInfo));
     }
 
     /**
@@ -78,7 +80,11 @@ public class AppService {
         for (String key : keys) {
             String[] split = key.split(":");
             int userId = split.length == 1 ? PKGUtils.getUserId(uid) : Integer.parseInt(split[1].trim());
-            appRecords.add(get(split[0], userId));
+            AppRecord appRecord = get(split[0], userId);
+            // 应用可能刚被卸载 / 当前用户没有安装, get() 会返回 null.
+            // 不要把 null 缓存进 UID 列表, 否则这一整个开机周期都会拿到带 null 的列表.
+            if (appRecord != null)
+                appRecords.add(appRecord);
         }
 
         UID_RECORD_MAP.put(uid, appRecords);

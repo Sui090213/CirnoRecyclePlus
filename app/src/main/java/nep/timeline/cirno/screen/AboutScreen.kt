@@ -151,8 +151,9 @@ fun AboutScreen(
                 Text(
                     text = "小米 / Redmi / POCO\n" +
                         "MIUI / HyperOS 自带的 millet（Greeze）冻结服务可能和本模块互相抢进程，" +
-                        "表现为反复冻结 / 解冻和功耗升高。v1.3.1 起刷入时会自动检测并禁用，" +
-                        "也可以在「设置 → 小米 millet 兼容」里一键禁用 / 恢复，恢复会按安装时备份还原。",
+                        "表现为反复冻结 / 解冻和功耗升高。v1.4.0 起会区分「只是存在」和「正在运行」，" +
+                        "只有检测到运行中的 Greeze 才自动禁用；也可以在「设置 → 小米 millet 兼容」里" +
+                        "一键禁用 / 恢复，恢复失败会保留备份。",
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(Modifier.size(8.dp))
@@ -183,8 +184,8 @@ fun AboutScreen(
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 Text(
                     text = "基于 Freezer-Team / Nep-Timeline 的 Cirno 二次修改，遵循 GPL-3.0。" +
-                        "\n界面使用 Jetpack Compose + Material 3；毛玻璃使用 Haze；" +
-                        "在线图库示例来自 Lorem Picsum。",
+                        "\n界面使用 Jetpack Compose + Material 3；" +
+                        "在线图库来自 Wallhaven / Lorem Picsum。",
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(Modifier.size(8.dp))
