@@ -3,6 +3,32 @@
 本文件只记录 **Cirno Recycle+（二改版）** 相对上游 Cirno 的改动。上游自己的更新记录请见
 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)。
 
+## v1.4.0-beta.2 — 2026-11-02（测试版）
+
+### 修复
+
+- **长进程名显示不全**
+  - 进程列表不再 `maxLines=1 + Ellipsis`，允许完整换行；主进程额外显示完整包名；
+  - 进程名用等宽字体，并支持长按选择复制，方便排查。
+- **列表 / 进程面板卡顿**
+  - 应用图标改为 IO 线程加载 + LruCache，主线程不再 `loadIcon()/toBitmap()`；
+  - 应用列表先按 runtime 建一次索引，排序和状态徽章改为 O(1) 查找，移除比较器里的重复线性搜索；
+  - `getInstalledApplications` 不再请求 meta-data；
+  - 进程面板的 `PackageManager` 进程枚举移到 IO 线程。
+- **滚动位置丢失**
+  - 用 `SaveableStateHolder` 保留软件列表 / 设置 / 关于 / 应用详情页的滚动位置。
+
+### 保留
+
+- 配置导出 / 导入（SHA-256、导入前备份、失败回滚）
+- Wallhaven / Picsum 在线图库
+- 背景 SHA-256 校验与同路径换图刷新
+
+### 版本
+
+- 测试版本 1.4.0-beta.2，APK `versionCode=11`，模块 `versionCode=14002`。
+- 标记为 **Pre-release（测试版）**；稳定版仍为 `v1.3.1`。
+
 ## v1.4.0-beta.1 — 2026-11-01（测试版）
 
 这一版集中修掉 millet、运行时状态、背景换图和配置安全相关的问题，并补上配置备份 / 在线图库。

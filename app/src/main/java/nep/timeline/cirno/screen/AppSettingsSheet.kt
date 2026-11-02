@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -33,8 +34,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -237,9 +238,7 @@ fun AppSettingsContent(
                 Text(
                     text = appName,
                     style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     text = (if (userId == 0) "" else "$userId#") + packageName,
@@ -439,10 +438,16 @@ fun AppSettingsContent(
 
         // 进程列表 = 「PackageManager 里声明的进程」∪「当前活着的进程」:
         // 用户经常需要给一个还没启动的子进程 (例如微信 :push) 预先设规则, 只列运行中的进程不够用.
+        // 查询 PackageManager 可能在低端机上卡主线程, 放到 IO 线程做; 先显示主进程.
         val packageManager = context.packageManager
-        val declaredProcesses = remember(packageName) {
-            runCatching { ProcessCatalog.declaredProcesses(packageManager, packageName) }
-                .getOrDefault(listOf(packageName))
+        var declaredProcesses by remember(packageName) {
+            mutableStateOf(listOf(packageName))
+        }
+        LaunchedEffect(packageName) {
+            declaredProcesses = withContext(Dispatchers.IO) {
+                runCatching { ProcessCatalog.declaredProcesses(packageManager, packageName) }
+                    .getOrDefault(listOf(packageName))
+            }
         }
         val showInactive = AppPrefs.showInactiveProcesses
         val processRows = remember(appState, declaredProcesses, showInactive) {
@@ -708,12 +713,27 @@ private fun AppProcessRow(
     ) {
         Checkbox(checked = selected, onCheckedChange = onSelectedChange, enabled = selectable)
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = if (isMainProcess) "主进程" else displayName,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            // 进程名可能很长 (例如 com.xxx:push:remote)。这里不再 maxLines=1 + 省略号,
+            // 允许换行显示完整名称; SelectionContainer 方便用户长按复制排查.
+            SelectionContainer {
+                Text(
+                    text = if (isMainProcess) "主进程" else displayName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace,
+                    softWrap = true,
+                )
+            }
+            if (isMainProcess) {
+                SelectionContainer {
+                    Text(
+                        text = displayName,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        softWrap = true,
+                    )
+                }
+            }
             val detail = buildString {
                 if (row.running) {
                     append("pid ")

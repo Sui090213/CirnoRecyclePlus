@@ -9,11 +9,11 @@
 > **AI 制作声明**：本项目的大部分代码由 AI 生成 / AI 辅助完成，真人作者已完成测试和部分修改。**如果你介意 AI 参与开发，请不要使用本项目。**
 >
 > 基于 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)（原 [Nep-Timeline/Cirno](https://github.com/Nep-Timeline/Cirno)）**二次修改**
-> 作者：**flyingr** · 版本：**1.4.0-beta.1（测试版）** · 协议：**GPL-3.0**
+> 作者：**flyingr** · 版本：**1.4.0-beta.2（测试版）** · 协议：**GPL-3.0**
 
 **先说明：这是二改，不是原作者的作品。** 原项目「Cirno」的版权归 Nep-Timeline / Freezer-Team 所有，本仓库只是在其基础上加了内存回收和前台内存压制功能，并保持同样的 GPL-3.0 开源协议。
 
-**v1.4.0-beta.1（测试版）**：新增配置导出 / 导入、Wallhaven / Picsum 在线图库、背景与配置的 SHA-256 校验；修复 millet 备份 / 恢复失败处理、`AppService.get()` 首次返回 null、自定义背景换图不刷新等问题。测试版不要用于生产环境，发布说明和资产只在 Release 页提供。
+**v1.4.0-beta.2（测试版）**：修复长进程名被省略号截断、进程列表打开卡顿、应用列表排序/图标解码卡顿；保留配置导出 / 导入、Wallhaven / Picsum 在线图库、背景与配置 SHA-256 校验。测试版不要用于生产环境。
 
 ---
 
@@ -80,7 +80,7 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 
 **步骤**
 
-1. 从 Release 页面下载 `Cirno-Recycle-Plus-v1.4.0-beta.1.zip`（这是测试版；稳定版仍为 `v1.3.1`）。
+1. 从 Release 页面下载 `Cirno-Recycle-Plus-v1.4.0-beta.2.zip`（这是测试版；稳定版仍为 `v1.3.1`）。
 2. 在 Magisk / KernelSU / APatch 里刷入（**建议在已开机的系统里刷**，这样刷入时就能自动装 APK；recovery 刷入也能用，只是 APK 要等开机后由 `service.sh` 自动补装）：
    - 刷入时会**自动安装配套 APK**（`com.flyingr.cirnorecycle`），并创建配置目录 `/data/misc/CirnoRecycle`；
    - 如果安装时 PackageManager 还没就绪、导致 APK 安装失败，模块会在**下次开机后自动补装一次**。
@@ -265,7 +265,7 @@ bash scripts/package-module.sh
 产物：
 
 - APK：`app/build/outputs/apk/release/app-release.apk`（仓库自带公开测试签名，见 [signing/README.md](signing/README.md)）
-- 模块 zip：`dist/Cirno-Recycle-Plus-v1.4.0-beta.1.zip`
+- 模块 zip：`dist/Cirno-Recycle-Plus-v1.4.0-beta.2.zip`
 - 校验值：`dist/CHECKSUMS.txt`
 
 ## 目录结构

@@ -64,11 +64,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.SaveableStateHolder
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -76,7 +78,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -84,11 +85,13 @@ import com.topjohnwu.superuser.Shell
 import nep.timeline.cirno.BuildConfig
 import nep.timeline.cirno.CommonConstants
 import nep.timeline.cirno.R
+import nep.timeline.cirno.client.AppIconCache
 import nep.timeline.cirno.client.AppPrefs
 import nep.timeline.cirno.client.RuntimeClient
 import nep.timeline.cirno.client.UpdateChecker
 import nep.timeline.cirno.configs.ConfigManager
 import nep.timeline.cirno.configs.checkers.AppConfigs
+import nep.timeline.cirno.runtime.AppRuntimeState
 import nep.timeline.cirno.runtime.RuntimeState
 import nep.timeline.cirno.utils.PKGUtils
 import kotlinx.coroutines.Dispatchers
@@ -109,16 +112,20 @@ private data class AppDetailTarget(
     val userId: Int,
 )
 
+private fun runtimeKey(packageName: String, userId: Int): String = packageName + "#" + userId
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen() {
-    val handler = Handler(Looper.getMainLooper())
+    val handler = remember { Handler(Looper.getMainLooper()) }
     val context = LocalContext.current
     val packageManager = context.packageManager
+    val tabsStateHolder = rememberSaveableStateHolder()
 
     fun getInstalledApps(context: Context): List<ApplicationInfo> {
         val pm = context.packageManager
-        return pm.getInstalledApplications(PackageManager.GET_META_DATA).filter {
+        // 列表不需要每个应用的 meta-data；传 0 可以少解析一遍 manifest，启动更快.
+        return pm.getInstalledApplications(0).filter {
             // Google 全家桶默认受保护, 但仍要显示在列表里: 用户可能不使用 FCM,
             // 需要在应用详情里单独打开「允许冻结 Google 服务」.
             CommonConstants.isGoogleFamily(it.packageName) ||
@@ -228,39 +235,46 @@ fun MainScreen() {
         label = "detail"
     ) { target ->
         if (target == null) {
-            MainTabs(
-                context = context,
-                packageManager = packageManager,
-                apps = apps.value,
-                appLabels = appLabels,
-                searchQuery = searchQuery,
-                onSearchQueryChange = { searchQuery = it },
-                tab = tab,
-                onTabChange = { tab = it },
-                runtime = runtime,
-                rootOk = rootOk.value,
-                configOk = configOk.value,
-                onOpenApp = { info ->
-                    detail = AppDetailTarget(
-                        appName = appLabels[info.packageName] ?: info.packageName,
-                        packageName = info.packageName,
-                        userId = PKGUtils.getUserId(info.uid),
-                    )
-                    tab = MainTab.APPS
-                },
-                onLongPressApp = { sheetApp = it },
-            )
+            // 用 SaveableStateHolder 保留三个 Tab 和详情的滚动位置:
+            // AnimatedContent 会把离屏页面从 composition 移除, 不包一层的话滚回顶部.
+            tabsStateHolder.SaveableStateProvider("main-tabs") {
+                MainTabs(
+                    context = context,
+                    packageManager = packageManager,
+                    apps = apps.value,
+                    appLabels = appLabels,
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    tab = tab,
+                    onTabChange = { tab = it },
+                    runtime = runtime,
+                    rootOk = rootOk.value,
+                    configOk = configOk.value,
+                    stateHolder = tabsStateHolder,
+                    onOpenApp = { info ->
+                        detail = AppDetailTarget(
+                            appName = appLabels[info.packageName] ?: info.packageName,
+                            packageName = info.packageName,
+                            userId = PKGUtils.getUserId(info.uid),
+                        )
+                        tab = MainTab.APPS
+                    },
+                    onLongPressApp = { sheetApp = it },
+                )
+            }
         } else {
-            AppDetailPage(
-                target = target,
-                onBack = { detail = null },
-                backProgress = backProgress,
-            )
+            tabsStateHolder.SaveableStateProvider("detail-${target.packageName}#${target.userId}") {
+                AppDetailPage(
+                    target = target,
+                    onBack = { detail = null },
+                    backProgress = backProgress,
+                )
+            }
         }
     }
 
     sheetApp?.let { app ->
-        val appLabel = remember(app) { app.loadLabel(packageManager).toString() }
+        val appLabel = appLabels[app.packageName] ?: app.packageName
         ModalBottomSheet(
             onDismissRequest = { sheetApp = null },
             sheetState = sheetState,
@@ -296,6 +310,7 @@ private fun MainTabs(
     runtime: RuntimeState?,
     rootOk: Boolean,
     configOk: Boolean,
+    stateHolder: SaveableStateHolder,
     onOpenApp: (ApplicationInfo) -> Unit,
     onLongPressApp: (ApplicationInfo) -> Unit,
 ) {
@@ -337,23 +352,25 @@ private fun MainTabs(
                 .padding(padding),
             label = "tab"
         ) { target ->
-            when (target) {
-                MainTab.APPS -> AppsTab(
-                    context = context,
-                    packageManager = packageManager,
-                    apps = apps,
-                    appLabels = appLabels,
-                    searchQuery = searchQuery,
-                    runtime = runtime,
-                    onOpenApp = onOpenApp,
-                    onLongPressApp = onLongPressApp,
-                )
-                MainTab.SETTINGS -> SettingsScreen()
-                MainTab.ABOUT -> AboutScreen(
-                    runtime = runtime,
-                    rootOk = rootOk,
-                    configOk = configOk,
-                )
+            stateHolder.SaveableStateProvider("tab-${target.name}") {
+                when (target) {
+                    MainTab.APPS -> AppsTab(
+                        context = context,
+                        packageManager = packageManager,
+                        apps = apps,
+                        appLabels = appLabels,
+                        searchQuery = searchQuery,
+                        runtime = runtime,
+                        onOpenApp = onOpenApp,
+                        onLongPressApp = onLongPressApp,
+                    )
+                    MainTab.SETTINGS -> SettingsScreen()
+                    MainTab.ABOUT -> AboutScreen(
+                        runtime = runtime,
+                        rootOk = rootOk,
+                        configOk = configOk,
+                    )
+                }
             }
         }
     }
@@ -555,21 +572,27 @@ private fun AppsTab(
         }
     }
 
-    val sortedApps = remember(filteredApps, runtime, AppPrefs.sortBackgroundFirst) {
+    // 每次 runtime 更新只建一次索引; 排序 / 列表项查状态都是 O(1), 避免在比较器里
+    // 反复 RuntimeClient.findApp (原来 500 个应用时会做几十万次线性查找).
+    val runtimeIndex = remember(runtime) {
+        runtime?.apps?.associateBy { runtimeKey(it.packageName, it.userId) } ?: emptyMap()
+    }
+
+    val sortedApps = remember(filteredApps, runtimeIndex, AppPrefs.sortBackgroundFirst) {
         val backgroundFirst = AppPrefs.sortBackgroundFirst
         filteredApps.sortedWith(
             compareBy<ApplicationInfo> { info ->
                 if (!backgroundFirst) {
                     0
                 } else {
-                    val state = RuntimeClient.findApp(runtime, info.packageName, PKGUtils.getUserId(info.uid))
+                    val state = runtimeIndex[runtimeKey(info.packageName, PKGUtils.getUserId(info.uid))]
                     if (state != null && state.liveProcesses > 0 && !state.visible) 0 else 1
                 }
             }.thenByDescending { info ->
                 if (!backgroundFirst) {
                     0
                 } else {
-                    RuntimeClient.findApp(runtime, info.packageName, PKGUtils.getUserId(info.uid))?.liveProcesses ?: 0
+                    runtimeIndex[runtimeKey(info.packageName, PKGUtils.getUserId(info.uid))]?.liveProcesses ?: 0
                 }
             }.thenByDescending { info ->
                 AppConfigs.isWhiteApp(info.packageName, PKGUtils.getUserId(info.uid))
@@ -603,10 +626,13 @@ private fun AppsTab(
                     items = sortedApps,
                     key = { appInfo -> appInfo.uid.toString() + "#" + appInfo.packageName }
                 ) { appInfo ->
+                    val userId = PKGUtils.getUserId(appInfo.uid)
                     AppItem(
                         appInfo = appInfo,
+                        appName = appLabels[appInfo.packageName] ?: appInfo.packageName,
                         packageManager = packageManager,
-                        runtime = runtime,
+                        runtimeAvailable = runtime != null,
+                        appState = runtimeIndex[runtimeKey(appInfo.packageName, userId)],
                         onOpen = { onOpenApp(appInfo) },
                         onLongPress = { onLongPressApp(appInfo) },
                     )
@@ -620,15 +646,24 @@ private fun AppsTab(
 @Composable
 private fun AppItem(
     appInfo: ApplicationInfo,
+    appName: String,
     packageManager: PackageManager,
-    runtime: RuntimeState?,
+    runtimeAvailable: Boolean,
+    appState: AppRuntimeState?,
     onOpen: () -> Unit,
     onLongPress: () -> Unit,
 ) {
-    val appName = remember(appInfo) { appInfo.loadLabel(packageManager).toString() }
-    val appIcon = remember(appInfo) {
-        appInfo.loadIcon(packageManager).toBitmap().asImageBitmap()
+    var appIcon by remember(appInfo.packageName) {
+        mutableStateOf(AppIconCache.get(appInfo.packageName))
     }
+    LaunchedEffect(appInfo.packageName) {
+        if (appIcon == null) {
+            appIcon = withContext(Dispatchers.IO) {
+                AppIconCache.load(packageManager, appInfo)
+            }
+        }
+    }
+
     val userId = PKGUtils.getUserId(appInfo.uid)
     val white = AppConfigs.isWhiteApp(appInfo.packageName, userId)
     val googleProtected = CommonConstants.isGoogleFamily(appInfo.packageName) &&
@@ -643,11 +678,24 @@ private fun AppItem(
                 onLongClick = onLongPress,
             )
     ) {
-        Image(
-            bitmap = appIcon,
-            contentDescription = null,
-            modifier = Modifier.size(48.dp)
-        )
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .background(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(12.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            val icon = appIcon
+            if (icon != null) {
+                Image(
+                    bitmap = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp)
+                )
+            }
+        }
         Spacer(modifier = Modifier.width(8.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -665,9 +713,8 @@ private fun AppItem(
                 style = MaterialTheme.typography.bodySmall
             )
             AppStatusBadge(
-                runtime = runtime,
-                packageName = appInfo.packageName,
-                userId = userId
+                appState = appState,
+                runtimeAvailable = runtimeAvailable,
             )
         }
     }
@@ -675,11 +722,10 @@ private fun AppItem(
 
 /** 应用列表里的冻结状态徽章. */
 @Composable
-private fun AppStatusBadge(runtime: RuntimeState?, packageName: String, userId: Int) {
-    if (runtime == null)
+private fun AppStatusBadge(appState: AppRuntimeState?, runtimeAvailable: Boolean) {
+    if (!runtimeAvailable)
         return
 
-    val appState = RuntimeClient.findApp(runtime, packageName, userId)
     val (text, color) = when {
         appState == null -> "未运行" to Color.Gray
         appState.frozenProcesses > 0 && appState.frozenProcesses >= appState.liveProcesses ->
@@ -737,14 +783,14 @@ private fun AppDetailPage(
                         Text(
                             text = target.appName + (if (target.userId == 0) "" else "#${target.userId}"),
                             style = MaterialTheme.typography.titleLarge,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = target.packageName,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
