@@ -68,6 +68,64 @@ public class MemoryLogicTest {
     }
 
     @Test
+    public void watermarkGateUsesHysteresis() {
+        MemorySettings settings = new MemorySettings();
+        settings.watermarkFallback = true;
+        settings.availableTriggerPct = 10.0;
+        settings.availableHysteresisPct = 3.0;
+
+        WatermarkGate gate = new WatermarkGate();
+        long total = 1000L;
+
+        // 12% 可用: 正常.
+        assertEquals(MemoryService.LEVEL_NORMAL, gate.level(settings, total, 120L));
+        // 10% 可用: 触发.
+        assertEquals(MemoryService.LEVEL_MODERATE, gate.level(settings, total, 100L));
+        // 回到 12%: 还在迟滞区间内, 不能立刻停.
+        assertEquals(MemoryService.LEVEL_MODERATE, gate.level(settings, total, 120L));
+        // 13% 可用: 退出.
+        assertEquals(MemoryService.LEVEL_NORMAL, gate.level(settings, total, 130L));
+        // 5% 可用: 高压.
+        assertEquals(MemoryService.LEVEL_HIGH, gate.level(settings, total, 50L));
+    }
+
+    @Test
+    public void watermarkGateCanBeDisabled() {
+        MemorySettings settings = new MemorySettings();
+        settings.watermarkFallback = false;
+
+        WatermarkGate gate = new WatermarkGate();
+        assertEquals(MemoryService.LEVEL_NORMAL, gate.level(settings, 1000L, 10L));
+        assertFalse(gate.isActive());
+    }
+
+    @Test
+    public void reaperOnlyAcceptsContainerProcesses() {
+        assertTrue(ProcessReaper.isReapableProcess("com.tencent.mm:appbrand0"));
+        assertTrue(ProcessReaper.isReapableProcess("com.tencent.mm:xweb"));
+        // 游戏子进程默认不动, 避免丢未保存进度.
+        assertFalse(ProcessReaper.isReapableProcess("com.example:gameservice"));
+        assertFalse(ProcessReaper.isReapableProcess("com.tencent.mm:push"));
+        assertFalse(ProcessReaper.isReapableProcess("com.tencent.mm:MSF"));
+        assertFalse(ProcessReaper.isReapableProcess("com.tencent.mm"));
+        assertFalse(ProcessReaper.isReapableProcess("com.example:daemon"));
+    }
+
+    @Test
+    public void newSettingsHaveSafeDefaults() {
+        MemorySettings settings = new MemorySettings();
+        assertTrue(settings.watermarkFallback);
+        assertEquals(10.0, settings.availableTriggerPct, 0.0001);
+        assertEquals(3.0, settings.availableHysteresisPct, 0.0001);
+
+        // 深度回收默认关闭，且默认只 dry-run；用户必须自己打开才会真正 kill.
+        assertFalse(settings.reapFrozenChildren);
+        assertFalse(settings.reapApply);
+        assertTrue(settings.reapOnlyUnderPressure);
+        assertEquals(30, settings.reapMinFrozenMinutes);
+    }
+
+    @Test
     public void sanitizeFixesInsaneValues() {
         MemorySettings settings = new MemorySettings();
         settings.sampleIntervalMs = 0;

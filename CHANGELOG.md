@@ -3,6 +3,37 @@
 本文件只记录 **Cirno Recycle+（二改版）** 相对上游 Cirno 的改动。上游自己的更新记录请见
 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)。
 
+## v1.4.0 — 2026-11-06
+
+### 新增
+
+- **长时间冻结后的子进程深度回收**
+  - 应用完整冻结超过设定时间（默认 30 分钟）后，可回收 `:appbrand` / `:xweb` / `:sandbox` / `:video` / `:reader` 等容器型子进程；游戏子进程默认不动，避免丢未保存进度；
+  - 只处理已完整冻结、非可见、非音频 / 定位 / 录像 / VPN 的应用；
+  - 主进程、推送通道（`:push` / `:MSF` / `:mipush` 等）、系统应用、白名单应用永远不动；
+  - 默认只写 dry-run 日志，用户打开「实际执行 kill」后才会真正回收；
+  - 每个应用最多 2 轮，之后退避 6 小时，避免 `START_STICKY` 服务反复拉起。
+- **MemAvailable 水位兜底**
+  - PSI 不可用（或 PSI 低估压力）时，按 `MemAvailable / MemTotal` 触发回收；
+  - 触发水位默认 10%，带 3% 迟滞，回升到「水位 + 迟滞」才停止；
+  - 与 PSI 分级取较大值，PSI 正常时仍以 PSI 为主。
+- **严格的第三方 / 推送通道过滤**
+  - 系统应用判断增加 `/system`、`/system_ext`、`/product`、`/vendor`、`/odm`、`/apex` 安装路径兜底；
+  - 专门承担系统推送的包整体跳过内存回收；
+  - `compactApp` 不再压缩推送通道进程；
+  - 深度回收只接受容器型子进程白名单，未知进程一律跳过。
+
+### 独立模块
+
+- 新增 **Cirno ColorOS 17 系统更新禁用** 独立模块（`Cirno-ColorOS17-OTA-Disabler-v1.4.0.zip`）：
+  - 通过 `pm disable-user` / `pm suspend` 禁用 ColorOS 已知 OTA 包；
+  - 不改 system 分区，卸载模块自动恢复；
+  - 与主模块相互独立，可单独刷入。
+
+### 版本
+
+- 正式版 1.4.0，APK `versionCode=12`，主模块 `versionCode=14003`，OTA 模块 `versionCode=14000`。
+
 ## v1.4.0-beta.2 — 2026-11-02（测试版）
 
 ### 修复

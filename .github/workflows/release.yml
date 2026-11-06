@@ -46,12 +46,16 @@ jobs:
       - name: Package flashable module zip
         run: bash scripts/package-module.sh
 
+      - name: Package standalone ColorOS OTA disabler module
+        run: bash scripts/package-ota-module.sh
+
       - name: Collect standalone APK and source zip
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           cp app/build/outputs/apk/release/app-release.apk "dist/Cirno-Recycle-Plus-v${VERSION}.apk"
           git archive --format=zip --output "dist/Cirno-Recycle-Plus-v${VERSION}-source.zip" HEAD
           cd dist
+          rm -f CHECKSUMS-ota.txt
           sha256sum *.apk *.zip > CHECKSUMS.txt
 
       - name: Show artifacts
@@ -75,4 +79,6 @@ jobs:
             如果这是 `beta` / `test` tag，它会被自动标记为 **Pre-release（测试版）**，不要当作稳定版使用。
 
             刷入 `Cirno-Recycle-Plus-*.zip` 后会**自动安装配套 APK**；重启后在 LSPosed 中启用模块即可。
+
+            `Cirno-ColorOS17-OTA-Disabler-*.zip` 是**独立可选**的 ColorOS 17 系统更新禁用模块，不需要 Cirno Recycle+ 也能单独刷入；卸载即恢复更新包。
             详见 [README.md](https://github.com/${{ github.repository }}/blob/main/README.md)。

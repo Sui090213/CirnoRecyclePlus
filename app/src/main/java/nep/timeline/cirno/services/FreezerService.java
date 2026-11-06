@@ -114,12 +114,14 @@ public class FreezerService {
         // 连一个存活进程都没有: 不标记冻结, 等应用真的启动进程后 ProcessAddHook 会再次触发.
         if (liveProcesses == 0) {
             appRecord.setFrozen(false);
+            appRecord.clearFrozenSince();
             return;
         }
         // 已经全部冻结: 不重复冻结, 但「通知系统」这一步可能还没做过 (例如最后一个未冻结进程
         // 自然退出 / 手动只冻结了最后一个进程), 这里补一次, 保证系统状态和实际一致.
         if (frozenProcesses >= liveProcesses) {
             appRecord.setFrozen(true);
+            appRecord.markFrozenNow();
             notifyFrozenLocked(appRecord);
             return;
         }
@@ -160,6 +162,7 @@ public class FreezerService {
         }
 
         appRecord.setFrozen(true);
+        appRecord.markFrozenNow();
         notifyFrozenLocked(appRecord);
     }
 
@@ -282,7 +285,12 @@ public class FreezerService {
                 frozenProcesses++;
         }
 
-        appRecord.setFrozen(liveProcesses > 0 && frozenProcesses >= liveProcesses);
+        boolean frozen = liveProcesses > 0 && frozenProcesses >= liveProcesses;
+        appRecord.setFrozen(frozen);
+        if (frozen)
+            appRecord.markFrozenNow();
+        else
+            appRecord.clearFrozenSince();
     }
 
     /**
@@ -322,6 +330,8 @@ public class FreezerService {
         // 只有真正上报过「uid 冻结」才需要上报解冻 (部分冻结从来没上报过).
         reportUnfrozenLocked(appRecord);
         appRecord.setFrozen(false);
+        appRecord.clearFrozenSince();
+        appRecord.resetChildReapState();
         return true;
     }
 

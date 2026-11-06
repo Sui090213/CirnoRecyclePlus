@@ -112,6 +112,51 @@ public class MemorySettings {
     public long requestSeq = 0L;
 
     /**
+     * MemAvailable 水位兜底开关.
+     *
+     * <p>PSI 不是所有内核都开启; 部分设备读不到 {@code /proc/pressure/memory} 时,
+     * 原实现会直接停用自动回收. 打开后改用 {@code MemAvailable / MemTotal} 作为
+     * 触发信号, 并在 PSI 可用时作为「保底」: 水位已经很低时即使 PSI 不高也回收.
+     */
+    public boolean watermarkFallback = true;
+
+    /** 剩余可用内存低于该百分比时触发回收 (按 MemAvailable / MemTotal 计算). */
+    public double availableTriggerPct = 10.0;
+
+    /** 水位迟滞: 触发后要回升到「触发水位 + 迟滞」才停止, 避免在阈值附近反复回收. */
+    public double availableHysteresisPct = 3.0;
+
+    /**
+     * 长时间冻结后回收非必要子进程 (默认关闭).
+     *
+     * <p>只处理已完整冻结、且冻结超过 {@link #reapMinFrozenMinutes} 的应用;
+     * 只杀 :appbrand / :xweb / :sandbox 等容器型子进程, 主进程和推送通道永远不动.
+     * 打开后仍需 {@link #reapApply} 才会真正 kill, 否则只写 dry-run 日志.
+     */
+    public boolean reapFrozenChildren = false;
+
+    /** 是否真正 kill; false 时只记录计划, 方便用户先观察名单. */
+    public boolean reapApply = false;
+
+    /** 是否只在内存有压力时执行; false 时按冻结时长无条件检查 (不建议). */
+    public boolean reapOnlyUnderPressure = true;
+
+    /** 应用完整冻结至少多少分钟后才考虑回收子进程. */
+    public int reapMinFrozenMinutes = 30;
+
+    /** 子进程 RSS 小于该值时跳过, 避免为几十 KB 的辅助进程破坏应用状态. */
+    public long reapMinProcessBytes = 32L * 1024L * 1024L;
+
+    /** 单个应用一次最多杀几个子进程. */
+    public int reapMaxProcessesPerApp = 2;
+
+    /** 同一应用两次回收之间的最小间隔. */
+    public int reapCooldownMs = 10 * 60_000;
+
+    /** 每个回收周期最多处理几个应用. */
+    public int reapMaxAppsPerCycle = 1;
+
+    /**
      * 校正非法配置, 避免手动改 JSON 改出 0 间隔 / 负数导致线程空转或无限循环.
      */
     public void sanitize() {
@@ -170,5 +215,43 @@ public class MemorySettings {
             foregroundColdIntervalMs = 10_000;
         if (foregroundColdIntervalMs > 10 * 60_000)
             foregroundColdIntervalMs = 10 * 60_000;
+
+        if (availableTriggerPct < 1.0)
+            availableTriggerPct = 10.0;
+        if (availableTriggerPct > 50.0)
+            availableTriggerPct = 50.0;
+
+        if (availableHysteresisPct < 0.5)
+            availableHysteresisPct = 3.0;
+        if (availableHysteresisPct > 20.0)
+            availableHysteresisPct = 20.0;
+        // 触发水位 + 迟滞要留出停止空间, 不能顶到 100%.
+        if (availableTriggerPct + availableHysteresisPct > 95.0)
+            availableHysteresisPct = Math.max(0.5, 95.0 - availableTriggerPct);
+
+        if (reapMinFrozenMinutes < 5)
+            reapMinFrozenMinutes = 5;
+        if (reapMinFrozenMinutes > 24 * 60)
+            reapMinFrozenMinutes = 24 * 60;
+
+        if (reapMinProcessBytes < 0L)
+            reapMinProcessBytes = 0L;
+        if (reapMinProcessBytes > 1024L * 1024L * 1024L)
+            reapMinProcessBytes = 1024L * 1024L * 1024L;
+
+        if (reapMaxProcessesPerApp < 1)
+            reapMaxProcessesPerApp = 1;
+        if (reapMaxProcessesPerApp > 8)
+            reapMaxProcessesPerApp = 8;
+
+        if (reapCooldownMs < 60_000)
+            reapCooldownMs = 60_000;
+        if (reapCooldownMs > 24 * 60 * 60_000)
+            reapCooldownMs = 24 * 60 * 60_000;
+
+        if (reapMaxAppsPerCycle < 1)
+            reapMaxAppsPerCycle = 1;
+        if (reapMaxAppsPerCycle > 4)
+            reapMaxAppsPerCycle = 4;
     }
 }

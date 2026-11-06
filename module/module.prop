@@ -1,7 +1,7 @@
 id=cirno_recycle_plus
 name=Cirno Recycle+
-version=v1.4.0-beta.2
-versionCode=14002
+version=v1.4.0
+versionCode=14003
 author=flyingr
-description=Cirno 二改：冻结后台应用 + 冻结后内存回收（cgroup v2 memory.reclaim / 进程压缩），新增冻结状态显示、单应用冻结选项、进程级选择性冻结、简化设置界面与前台内存压制、应用内更新提示、深色模式 / 自定义主题色 / 莫奈取色；v1.2.2 修复白名单 Set.of 重复元素导致的闪退；v1.2.3 白名单改为绝对保护（含所有子进程，悬浮窗不再被冻），修复配置热重载漏事件，并让 Google 服务在允许后可真正冻结；v1.3.0 底栏三页 / 顶部搜索 / 自定义背景 / 页面返回动画；v1.3.1 刷入时自动检测并禁用小米 millet（Greeze），App 内可一键禁用 / 恢复；v1.4.0-beta.2：修复长进程名省略号与列表卡顿，配置导出导入、在线图库、背景 / 配置 SHA-256 校验（测试版）。刷入后自动安装配套 APK。基于 Nep-Timeline/Cirno (GPL-3.0) 二次修改。
+description=Cirno 二改：冻结后台应用 + 冻结后内存回收（cgroup v2 memory.reclaim / 进程压缩），新增冻结状态显示、单应用冻结选项、进程级选择性冻结、简化设置界面与前台内存压制、应用内更新提示、深色模式 / 自定义主题色 / 莫奈取色；v1.2.2 修复白名单 Set.of 重复元素导致的闪退；v1.2.3 白名单改为绝对保护（含所有子进程，悬浮窗不再被冻），修复配置热重载漏事件，并让 Google 服务在允许后可真正冻结；v1.3.0 底栏三页 / 顶部搜索 / 自定义背景 / 页面返回动画；v1.3.1 刷入时自动检测并禁用小米 millet（Greeze），App 内可一键禁用 / 恢复；v1.4.0：新增长时间冻结后的容器子进程深度回收（默认 dry-run，用户可切换实际执行）、MemAvailable 水位迟滞兜底、严格第三方 / 推送通道过滤；保留配置导出导入、在线图库、SHA-256 校验与列表性能修复。刷入后自动安装配套 APK。基于 Nep-Timeline/Cirno (GPL-3.0) 二次修改。
 updateJson=https://raw.githubusercontent.com/Sui090213/CirnoRecyclePlus/main/update.json

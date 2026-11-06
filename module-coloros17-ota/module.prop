@@ -1,0 +1,6 @@
+id=cirno_coloros17_ota_block
+name=Cirno ColorOS 17 系统更新禁用
+version=v1.4.0
+versionCode=14000
+author=flyingr
+description=可选独立模块：禁用 ColorOS 17 / ColorOS 12+ 的系统更新客户端（com.oplus.ota / com.oplus.sau / com.oplus.romupdate 等）。不修改 system 分区；卸载模块会自动恢复更新包。与 Cirno Recycle+ 主模块相互独立，可单独刷入。

@@ -16,11 +16,14 @@ Cirno 的冻结只解决 CPU / 调度问题：进程被写 `cgroup.freeze` 之�
 
 | 文件 | 作用 |
 |---|---|
-| `MemoryService.java` | 主循环：PSI 采样 → 压力分级 → 选候选 → 执行 L0/L2 → 反馈提前停止 |
+| `MemoryService.java` | 主循环：PSI 采样 + 水位判定 → 压力分级 → 选候选 → 执行 L0/L2 → 反馈提前停止 |
 | `PsiMonitor.java` | 解析 `/proc/pressure/memory`（some / full 行），纯静态方法，可单元测试 |
-| `CgroupMemory.java` | cgroup v2 路径探测、读 `memory.current`、写 `memory.reclaim`；支持从 `/proc/<pid>/cgroup` 反查目录 |
+| `WatermarkGate.java` | MemAvailable 水位 + 迟滞判定，PSI 不可用或低估压力时兜底；纯逻辑可测试 |
+| `CgroupMemory.java` | cgroup v2 路径探测、读 `memory.current` / `MemAvailable`、写 `memory.reclaim`；支持从 `/proc/<pid>/cgroup` 反查目录 |
 | `CompactHelper.java` | 反射调用系统 `CachedAppOptimizer.compactApp`，按方法签名动态适配 |
 | `ForegroundGuard.java` | 前台内存压制：给 top-app / foreground cgroup 写 `memory.high` 软上限 |
+| `ProcessReaper.java` | 长时间冻结后的容器子进程深度回收；默认 dry-run，用户可切换实际 kill |
+| `utils/PushChannelGuard.java` | 推送包 / 推送进程识别，回收和 compact 时跳过消息长连接 |
 | `ScreenState.java` | 「仅息屏时回收」用的屏幕状态查询 |
 | `MemorySettings.java` | 配置对象（Gson 序列化到 `GlobalSettings.json` 的 `memory` 字段） |
 
@@ -34,7 +37,7 @@ Cirno 的冻结只解决 CPU / 调度问题：进程被写 `cgroup.freeze` 之�
 
 所以它不会干扰 Cirno 原来的冻结 / 解冻 / 广播 / 网络等 hook，出问题最多是回收不生效，不会把冻结搞坏。
 
-## 3. 触发：PSI
+## 3. 触发：PSI + MemAvailable 水位兜底
 
 `/proc/pressure/memory` 的格式：
 
@@ -61,12 +64,20 @@ full avg10=0.00 avg60=0.00 avg300=0.00 total=0
 - `screenOffOnly`：亮屏时不自动回收；
 - 手动「立即回收一次」：写 `requestSeq` 时间戳，system_server 检测到变化后无视阈值和冷却强制跑一轮。
 
+**v1.4.0 新增 MemAvailable 水位兜底**（`WatermarkGate`）：
+
+- 读取 `/proc/meminfo` 的 `MemAvailable / MemTotal`，剩余可用内存低于 `availableTriggerPct`（默认 10%）时进入触发态；
+- 触发后要回升到 `availableTriggerPct + availableHysteresisPct`（默认 +3%）才退出，避免在阈值附近反复回收；
+- PSI 可用时，最终级别取 `max(PSI 级别, 水位级别)`：PSI 低估压力时水位仍能保底；PSI 不可用时水位单独工作；
+- 低于触发水位的 60% 视为高压，允许连续回收多轮。
+
 ## 4. 候选筛选
 
 从 Cirno 已有的 `AppRecord` 里挑，**不额外 hook**，所以选出来的应用和冻结器看到的状态一致：
 
 ```
 appRecord.isSystem()          -> 跳过（系统应用 / 当前输入法 / 白名单 / 内置白名单）
+PushChannelGuard.isPushPackage -> 跳过（专门承担系统推送的包）
 appState.isVisible()          -> 跳过（可见应用）
 appState.isLocation/audio/recording/vpn -> 跳过（正在定位 / 放音 / 录音 / VPN）
 frozenOnly && !appRecord.isFrozen()      -> 跳过（默认只回收冻结应用）
@@ -154,7 +165,7 @@ cgroup memory.current < minCgroupBytes   -> 跳过（收益太低）
 | `memory.reclaim` 写入 EBUSY/EAGAIN | 记 debug 日志 | 走 L2 |
 | 系统关压缩 / 找不到 compactApp | 日志警告一次 | 只走 L0 |
 | 没有 top-app `memory.high` | 日志警告一次 | 前台压制跳过 |
-| 没有 PSI | 日志警告一次 | 回收整体停用 |
+| 没有 PSI | 日志警告一次 | v1.4.0 起改走 MemAvailable 水位兜底；水位也不可用才停用 |
 | 没有 LSPosed | 模块代码不加载 | App 里看不到日志，需要用户检查 |
 
 ## 9. 配置
@@ -284,6 +295,22 @@ App 与 system_server 不在同一进程，也没有现成的 binder 接口，�
 - **软重启取舍**：如果操作已经写进文件、但 system_server 还没来得及执行就软重启（LSPosed 环境常见），
   重启后第一次看到该文件会把它登记为「基线」而不是重放，避免开机时突然冻结某些应用。
   这种情况下 App 里会显示「已发送」但状态没变，再点一次即可（界面上也会提示「操作已发送，正在执行…」后无结果）。
+
+## 13.5 长时间冻结后的子进程深度回收（v1.4.0）
+
+`ProcessReaper` 只在用户显式打开「回收非必要子进程」后工作，默认 `reapApply=false` 只写 dry-run 日志。
+
+触发条件（全部满足）：
+
+- 应用完整冻结超过 `reapMinFrozenMinutes`（默认 30 分钟）；
+- 不是系统 / 白名单 / 可见 / 音频 / 定位 / 录像 / VPN；
+- 不是 `PushChannelGuard.isPushPackage` 的推送包；
+- 每个应用有 `reapCooldownMs`（默认 10 分钟）冷却，连续 2 轮后 6 小时退避。
+
+只杀白名单内的容器型子进程：`:appbrand*`、`:xweb*`、`:sandbox*`、`:video`、`:reader`；游戏 `:game` / `:gameservice` 默认不动，避免丢未保存进度；
+主进程、`:push` / `:MSF` / `:mipush` 等推送通道、`oom_score_adj < 900` 的 service 进程、未知子进程一律跳过。
+
+kill 前会核对 `/proc/<pid>/stat` 的 starttime，防止 pid 复用；使用 `Process.killProcess`，不经过 shell。
 
 ## 14. 验证方法（补充手动冻结）
 

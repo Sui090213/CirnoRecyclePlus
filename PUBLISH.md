@@ -29,18 +29,18 @@ $git = 'D:\deepseek\tools\git\cmd\git.exe'
 如果开了两步验证，密码位置要填 **Personal Access Token**（GitHub → Settings → Developer settings
 → Personal access tokens → Fine-grained tokens，勾选该仓库的 `Contents: Read and write`）。
 
-## 3. 打 tag 并发布 v1.2.2
+## 3. 打 tag 并发布 v1.4.0
 
 ```powershell
-& $git tag -a v1.2.2 -m "Cirno Recycle+ v1.2.2"
+& $git tag -a v1.4.0 -m "Cirno Recycle+ v1.4.0"
 & $git push origin main
-& $git push origin v1.2.2
+& $git push origin v1.4.0
 ```
 
 推送 tag 后，`.github/workflows/release.yml` 会自动：
 
 1. 用 JDK 25 + Android SDK 36 构建 Release APK（仓库自带公开签名密钥，自动签名）；
-2. 跑 `scripts/package-module.sh` 打包成 `dist/Cirno-Recycle-Plus-v1.2.2.zip`；
+2. 跑 `scripts/package-module.sh` 打包成 `dist/Cirno-Recycle-Plus-v1.4.0.zip`，并跑 `scripts/package-ota-module.sh` 打包独立 ColorOS OTA 模块；
 3. 创建 GitHub Release，上传模块 zip 和 `CHECKSUMS.txt`。
 
 > 如果不想让 Actions 自动建 Release（例如想手动上传 APK / 源码包），可以先不推 tag，
@@ -59,11 +59,11 @@ $git = 'D:\deepseek\tools\git\cmd\git.exe'
 
 ```json
 {
-  "version": "v1.2.2",
-  "versionCode": 12002,
-  "zipUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/download/v1.2.2/Cirno-Recycle-Plus-v1.2.2.zip",
-  "apkUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/download/v1.2.2/Cirno-Recycle-Plus-v1.2.2.apk",
-  "releaseUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/tag/v1.2.2",
+  "version": "v1.4.0",
+  "versionCode": 14003,
+  "zipUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/download/v1.4.0/Cirno-Recycle-Plus-v1.4.0.zip",
+  "apkUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/download/v1.4.0/Cirno-Recycle-Plus-v1.4.0.apk",
+  "releaseUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/tag/v1.4.0",
   "changelog": "https://raw.githubusercontent.com/<你的用户名>/CirnoRecyclePlus/main/CHANGELOG.md"
 }
 ```
@@ -78,18 +78,22 @@ $git = 'D:\deepseek\tools\git\cmd\git.exe'
 ## 5. 本地构建 / 验证（不依赖 GitHub）
 
 ```powershell
-# 一键：单元测试 -> Release APK -> 模块 zip
+# 一键：单元测试 -> Release APK -> 主模块 zip -> ColorOS OTA 独立模块
 powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
 
-# 只打包模块 zip（APK 已经构建好时）
+# 只打包主模块 zip（APK 已经构建好时）
 powershell -ExecutionPolicy Bypass -File scripts\package-module.ps1
+
+# 只打包 ColorOS OTA 独立模块
+powershell -ExecutionPolicy Bypass -File scripts\package-ota-module.ps1
 ```
 
 产物在 `dist\`：
 
-- `Cirno-Recycle-Plus-v1.2.2.zip`：可直接刷入的模块（里面带 `apk/CirnoRecyclePlus.apk`）
-- `Cirno-Recycle-Plus-v1.2.2.apk`：独立 APK（可从 `app/build/outputs/apk/release/app-release.apk` 复制）
-- `Cirno-Recycle-Plus-v1.2.2-source.zip`：源码包
+- `Cirno-Recycle-Plus-v1.4.0.zip`：可直接刷入的主模块（里面带 `apk/CirnoRecyclePlus.apk`）
+- `Cirno-ColorOS17-OTA-Disabler-v1.4.0.zip`：独立的 ColorOS 17 系统更新禁用模块
+- `Cirno-Recycle-Plus-v1.4.0.apk`：独立 APK（可从 `app/build/outputs/apk/release/app-release.apk` 复制）
+- `Cirno-Recycle-Plus-v1.4.0-source.zip`：源码包
 - `CHECKSUMS.txt`：SHA256
 
 ## 6. 发布前自检清单
@@ -98,6 +102,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package-module.ps1
 - [ ] `./gradlew assembleRelease` 通过，APK 已签名（`apksigner verify`）
 - [ ] 模块 zip 结构正确：根目录就是 `module.prop`，没有多包一层文件夹
 - [ ] 模块 zip 里带 `apk/CirnoRecyclePlus.apk`
+- [ ] 独立 ColorOS OTA 模块 zip 结构正确，`uninstall.sh` 能恢复更新包
 - [ ] `update.json` 的 `version` 与 APK `versionName` / 模块 `version` 一致，链接指向本次 Release
 - [ ] 真机测试：刷入 → 重启 → LSPosed 启用 → App 设置页能读写配置，深色模式 / 主题色 / 更新检查正常
 - [ ] 应用面板能列出含未运行的进程，白名单应用能手动冻结子进程

@@ -16,6 +16,44 @@ public final class ProcessStat {
     }
 
     /**
+     * @return 进程的 oom_score_adj; 读取失败 / 进程不存在时返回 {@link Integer#MIN_VALUE}
+     */
+    public static int getOomScoreAdj(int pid) {
+        if (pid <= 0)
+            return Integer.MIN_VALUE;
+
+        try {
+            String content = new String(Files.readAllBytes(Paths.get("/proc/" + pid + "/oom_score_adj")), StandardCharsets.UTF_8).trim();
+            return Integer.parseInt(content);
+        } catch (Throwable ignored) {
+            return Integer.MIN_VALUE;
+        }
+    }
+
+    /**
+     * @return 进程 RSS (字节); 读取失败 / 进程不存在时返回 -1
+     */
+    public static long getRssBytes(int pid) {
+        if (pid <= 0)
+            return -1L;
+
+        try {
+            String content = new String(Files.readAllBytes(Paths.get("/proc/" + pid + "/status")), StandardCharsets.UTF_8);
+            for (String line : content.split("\n")) {
+                if (!line.startsWith("VmRSS:"))
+                    continue;
+                String[] parts = line.trim().split("\\s+");
+                if (parts.length < 2)
+                    return -1L;
+                return Long.parseLong(parts[1]) * 1024L;
+            }
+        } catch (Throwable ignored) {
+            return -1L;
+        }
+        return -1L;
+    }
+
+    /**
      * @return 进程启动时间 (开机以来的时钟滴答数); 读取失败 / 进程不存在时返回 -1
      */
     public static long getStartTime(int pid) {

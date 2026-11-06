@@ -94,4 +94,9 @@ Write-Host '=== 打包模块 zip ==='
 if ($LASTEXITCODE -ne 0) { throw "模块打包失败 (exit $LASTEXITCODE)" }
 
 Write-Host ''
+Write-Host '=== 打包 ColorOS OTA 独立模块 ==='
+& (Join-Path $PSScriptRoot 'package-ota-module.ps1')
+if ($LASTEXITCODE -ne 0) { throw "OTA 模块打包失败 (exit $LASTEXITCODE)" }
+
+Write-Host ''
 Write-Host '全部完成。产物在 dist\ 目录。'

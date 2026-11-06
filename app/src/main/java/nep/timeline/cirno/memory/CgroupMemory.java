@@ -279,12 +279,26 @@ public class CgroupMemory {
      * 物理内存总量 (字节), 读不到返回 0.
      */
     public static long getTotalMemBytes() {
+        return getMemInfoBytes("MemTotal:", 0L);
+    }
+
+    /**
+     * 可用内存 (字节), 读不到返回 -1.
+     *
+     * <p>用 {@code MemAvailable} 而不是 {@code MemFree}: 前者已经把可回收的 page cache
+     * 算进去, 更接近「不触发换页 / 回收时还能给新应用用的内存」.
+     */
+    public static long getAvailableMemBytes() {
+        return getMemInfoBytes("MemAvailable:", -1L);
+    }
+
+    private static long getMemInfoBytes(String key, long fallback) {
         String text = readText(new File(MEMINFO));
         if (text == null)
-            return 0L;
+            return fallback;
 
         for (String line : text.split("\n")) {
-            if (!line.startsWith("MemTotal:"))
+            if (!line.startsWith(key))
                 continue;
             String[] parts = line.trim().split("\\s+");
             if (parts.length < 2)
@@ -292,10 +306,10 @@ public class CgroupMemory {
             try {
                 return Long.parseLong(parts[1]) * 1024L;
             } catch (NumberFormatException ignored) {
-                return 0L;
+                return fallback;
             }
         }
-        return 0L;
+        return fallback;
     }
 
     /**

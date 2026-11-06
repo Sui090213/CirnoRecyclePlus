@@ -1,6 +1,7 @@
 package nep.timeline.cirno.entity;
 
 import android.content.pm.ApplicationInfo;
+import android.os.SystemClock;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -40,6 +41,18 @@ public class AppRecord {
      * <p>用于限流: 进程写 cgroup 失败 / 规则选中的进程还没启动时, 避免每 2 秒都重试一次.
      */
     private volatile long lastAutoFreezeKickMs;
+
+    /** 最近一次「完整冻结」开始的时间 (elapsedRealtime); 0 表示当前没有完整冻结. */
+    private volatile long frozenSinceMs;
+
+    /** 上一次尝试回收子进程的时间 (elapsedRealtime). */
+    private volatile long lastChildReapMs;
+
+    /** 已经回收过几轮子进程; 达到上限后进入退避, 防止 START_STICKY 服务反复拉起. */
+    private volatile int childReapCount;
+
+    /** 退避截止时间; 在此之前不再对这个应用做子进程回收. */
+    private volatile long childReapBlockedUntilMs;
 
     public AppRecord(ApplicationInfo applicationInfo) {
         this.packageName = applicationInfo.packageName;
@@ -89,10 +102,30 @@ public class AppRecord {
         return packageName + ":" + userId;
     }
 
+    /** 标记「刚刚进入完整冻结」; 已冻结时不会刷新时间, 保证 frozenSinceMs 是首次冻结时间. */
+    public void markFrozenNow() {
+        if (frozenSinceMs <= 0L)
+            frozenSinceMs = SystemClock.elapsedRealtime();
+    }
+
+    /** 解冻 / 不再完整冻结时清掉冻结起点. */
+    public void clearFrozenSince() {
+        frozenSinceMs = 0L;
+    }
+
+    /** 解冻后允许下一次冻结重新计算深度回收的冷却与次数. */
+    public void resetChildReapState() {
+        lastChildReapMs = 0L;
+        childReapCount = 0;
+        childReapBlockedUntilMs = 0L;
+    }
+
     public void reset() {
         this.frozen = false;
         this.reportedFrozen = false;
         this.appState = new AppState(this);
+        clearFrozenSince();
+        resetChildReapState();
     }
 
     @Override

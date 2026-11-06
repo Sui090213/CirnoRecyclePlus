@@ -95,6 +95,13 @@ private data class MemoryUiConfig(
     val foregroundColdIntervalMs: Int = 30000,
     val foregroundReclaim: Boolean = false,
     val requestSeq: Long = 0L,
+    val watermarkFallback: Boolean = true,
+    val availableTriggerPct: Double = 10.0,
+    val availableHysteresisPct: Double = 3.0,
+    val reapFrozenChildren: Boolean = false,
+    val reapApply: Boolean = false,
+    val reapOnlyUnderPressure: Boolean = true,
+    val reapMinFrozenMinutes: Int = 30,
 )
 
 private fun MemorySettings.toUi(): MemoryUiConfig = MemoryUiConfig(
@@ -121,6 +128,13 @@ private fun MemorySettings.toUi(): MemoryUiConfig = MemoryUiConfig(
     foregroundColdIntervalMs = foregroundColdIntervalMs,
     foregroundReclaim = foregroundReclaim,
     requestSeq = requestSeq,
+    watermarkFallback = watermarkFallback,
+    availableTriggerPct = availableTriggerPct,
+    availableHysteresisPct = availableHysteresisPct,
+    reapFrozenChildren = reapFrozenChildren,
+    reapApply = reapApply,
+    reapOnlyUnderPressure = reapOnlyUnderPressure,
+    reapMinFrozenMinutes = reapMinFrozenMinutes,
 )
 
 private fun MemoryUiConfig.applyTo(settings: MemorySettings) {
@@ -146,6 +160,13 @@ private fun MemoryUiConfig.applyTo(settings: MemorySettings) {
     settings.foregroundColdCompact = foregroundColdCompact
     settings.foregroundColdIntervalMs = foregroundColdIntervalMs
     settings.foregroundReclaim = foregroundReclaim
+    settings.watermarkFallback = watermarkFallback
+    settings.availableTriggerPct = availableTriggerPct
+    settings.availableHysteresisPct = availableHysteresisPct
+    settings.reapFrozenChildren = reapFrozenChildren
+    settings.reapApply = reapApply
+    settings.reapOnlyUnderPressure = reapOnlyUnderPressure
+    settings.reapMinFrozenMinutes = reapMinFrozenMinutes
     // 注意: requestSeq 不在这里写, 由 requestReclaimOnce() 单独处理,
     // 否则普通开关保存时会把过期的「立即回收」时间戳又写回去, 导致重复触发.
 }
@@ -576,6 +597,49 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                     }
 
                     // ----------------------------------------------------------
+                    // B2. 长时间冻结后的子进程深度回收
+                    // ----------------------------------------------------------
+                    SectionCard("长时间冻结深度回收") {
+                        SwitchRow(
+                            title = "回收非必要子进程",
+                            subtitle = "冻结超过设定时间后，回收 :appbrand / :xweb / :sandbox 等容器子进程；主进程、推送通道、系统应用不动",
+                            checked = current.reapFrozenChildren,
+                            onCheckedChange = { value -> update { it.copy(reapFrozenChildren = value) } }
+                        )
+                        if (current.reapFrozenChildren) {
+                            SwitchRow(
+                                title = "实际执行 kill",
+                                subtitle = "关闭时只写 dry-run 日志，不真正杀进程；建议先看日志确认名单",
+                                checked = current.reapApply,
+                                onCheckedChange = { value -> update { it.copy(reapApply = value) } }
+                            )
+                            SwitchRow(
+                                title = "仅内存有压力时执行",
+                                subtitle = "关闭后会按冻结时长无条件检查（不建议）",
+                                checked = current.reapOnlyUnderPressure,
+                                onCheckedChange = { value -> update { it.copy(reapOnlyUnderPressure = value) } }
+                            )
+                            SliderRow(
+                                title = "冻结多久后回收",
+                                valueText = "${current.reapMinFrozenMinutes} 分钟",
+                                value = current.reapMinFrozenMinutes.toFloat(),
+                                range = 10f..180f,
+                                steps = 16,
+                                onChangeFinished = { value ->
+                                    update {
+                                        it.copy(reapMinFrozenMinutes = ((value / 10f).roundToInt() * 10).coerceIn(10, 180))
+                                    }
+                                }
+                            )
+                            Text(
+                                text = "只处理已完整冻结、非可见、非音频 / 定位 / VPN 的应用；每个应用最多 2 轮，之后退避 6 小时。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // ----------------------------------------------------------
                     // C. 前台内存压制: 只留总开关, 细节收进高级设置
                     // ----------------------------------------------------------
                     SectionCard("前台内存压制 (实验性)") {
@@ -663,6 +727,48 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                                 update { it.copy(psiHighMultiplier = value.toDouble()) }
                             }
                         )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                        SwitchRow(
+                            title = "PSI 不可用时按可用内存回收",
+                            subtitle = "用 MemAvailable 水位兜底；PSI 可用时也会作为保底，避免 PSI 低估压力",
+                            checked = current.watermarkFallback,
+                            onCheckedChange = { value -> update { it.copy(watermarkFallback = value) } }
+                        )
+                        if (current.watermarkFallback) {
+                            SliderRow(
+                                title = "可用内存触发水位",
+                                valueText = String.format(Locale.US, "%.1f%%", current.availableTriggerPct),
+                                value = current.availableTriggerPct.toFloat(),
+                                range = 3f..20f,
+                                steps = 16,
+                                onChangeFinished = { value ->
+                                    update {
+                                        val trigger = value.toDouble()
+                                        it.copy(
+                                            availableTriggerPct = trigger,
+                                            availableHysteresisPct = minOf(it.availableHysteresisPct, 95.0 - trigger)
+                                        )
+                                    }
+                                }
+                            )
+                            SliderRow(
+                                title = "水位迟滞",
+                                valueText = String.format(Locale.US, "%.1f%%", current.availableHysteresisPct),
+                                value = current.availableHysteresisPct.toFloat(),
+                                range = 1f..10f,
+                                steps = 8,
+                                onChangeFinished = { value ->
+                                    update { it.copy(availableHysteresisPct = value.toDouble()) }
+                                }
+                            )
+                            Text(
+                                text = "可用内存低于触发水位开始回收；回升到「水位 + 迟滞」以上才停止。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
                         // 冷却时间不能小于采样间隔, 这里把滑块下限抬到采样间隔 (夹到 5..119 秒, 保证区间非空).
                         val cooldownMinSec = (current.sampleIntervalMs / 1000).coerceIn(5, 119)
                         SliderRow(

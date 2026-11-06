@@ -9,11 +9,11 @@
 > **AI 制作声明**：本项目的大部分代码由 AI 生成 / AI 辅助完成，真人作者已完成测试和部分修改。**如果你介意 AI 参与开发，请不要使用本项目。**
 >
 > 基于 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)（原 [Nep-Timeline/Cirno](https://github.com/Nep-Timeline/Cirno)）**二次修改**
-> 作者：**flyingr** · 版本：**1.4.0-beta.2（测试版）** · 协议：**GPL-3.0**
+> 作者：**flyingr** · 版本：**1.4.0** · 协议：**GPL-3.0**
 
 **先说明：这是二改，不是原作者的作品。** 原项目「Cirno」的版权归 Nep-Timeline / Freezer-Team 所有，本仓库只是在其基础上加了内存回收和前台内存压制功能，并保持同样的 GPL-3.0 开源协议。
 
-**v1.4.0-beta.2（测试版）**：修复长进程名被省略号截断、进程列表打开卡顿、应用列表排序/图标解码卡顿；保留配置导出 / 导入、Wallhaven / Picsum 在线图库、背景与配置 SHA-256 校验。测试版不要用于生产环境。
+**v1.4.0**：新增长时间冻结后的容器子进程深度回收（默认只写日志，用户可切换实际执行）、MemAvailable 水位迟滞兜底、严格第三方 / 推送通道过滤；保留配置导出 / 导入、Wallhaven / Picsum 在线图库、背景与配置 SHA-256 校验，以及长进程名 / 列表卡顿修复。另有独立的 **ColorOS 17 系统更新禁用模块**，可单独刷入。
 
 ---
 
@@ -67,8 +67,31 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 | 31 | **配置导出 / 导入** | 导出系统冻结 / 内存配置和界面偏好为单个 JSON，带 SHA-256；导入前校验并自动备份当前配置 | ✅ |
 | 32 | **真正的在线图库** | Wallhaven 关键词搜索 / 分页 + Picsum 备用源，全屏缩略图选择，下载后保存本地 | ✅ |
 | 33 | **本地 SHA-256 校验** | 背景导入时记录哈希、加载前校验；配置导入包先校验哈希再写入 | — |
+| 34 | **长时间冻结深度回收** | 冻结超过设定时间后，回收 `:appbrand` / `:xweb` / `:sandbox` 等容器子进程；主进程、推送通道、系统应用不动；默认只写 dry-run 日志，用户确认后才实际 kill | ✅ |
+| 35 | **MemAvailable 水位兜底** | PSI 不可用或低估压力时，按可用内存水位 + 迟滞触发回收；PSI 可用时取两者较大值 | ✅ |
+| 36 | **严格第三方 / 推送过滤** | 系统分区安装路径兜底；专门推送包整体跳过；`compactApp` 不压推送通道；深度回收只认容器型子进程白名单 | — |
 
 > 关于「GitHub 上能压制前台进程内存的模块」：我确实去找了。结论是**没有找到现成的、公开的、专门做 top-app `memory.high` 的 Magisk / LSPosed 模块**（GitHub 搜 `memory.high` 基本都是无关项目）。所以第 6、7、8 项是照着 AOSP 文档和几个内存优化项目的思路自己写的实现，不是直接搬的代码。没有引入 `process_madvise` JNI、没有改 lmkd 参数、没有改 zram 配置——这些要么需要 root shell / `CAP_SYS_NICE`，要么容易把设备调崩，不适合放进 LSPosed 模块里，所以没做。
+
+## v1.4.0 新增：长时间冻结深度回收
+
+设置 → 内存回收 → **长时间冻结深度回收**：
+
+- 打开「回收非必要子进程」后，只处理**完整冻结超过设定时间**的应用（默认 30 分钟）；
+- 默认只写 dry-run 日志，打开「实际执行 kill」后才会真正回收；
+- 只回收 `:appbrand` / `:xweb` / `:sandbox` / `:video` / `:reader` 这些容器型子进程；游戏子进程默认不动；
+- **主进程、推送通道、系统应用、白名单应用永远不动**；
+- 默认只在内存有压力时执行；每个应用最多 2 轮，之后退避 6 小时。
+
+这条策略的目的不是「杀后台」，而是：在长冻结场景下先回收微信小程序 / WebView 这类几百 MB 的容器进程，避免系统 LMK 直接杀掉应用主进程。
+
+## 独立模块：ColorOS 17 系统更新禁用
+
+仓库额外提供一个**独立可选模块**：`Cirno-ColorOS17-OTA-Disabler-v1.4.0.zip`。
+
+- 只针对 OPPO / OnePlus / realme 的 ColorOS 17（兼容 ColorOS 12+）；
+- 用 `pm disable-user` / `pm suspend` 禁用已知 OTA 包，不改 system 分区；
+- 卸载模块自动恢复；与 Cirno Recycle+ 主模块相互独立，可以单独刷入，也可以不刷。
 
 ## 安装
 
@@ -80,7 +103,7 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 
 **步骤**
 
-1. 从 Release 页面下载 `Cirno-Recycle-Plus-v1.4.0-beta.2.zip`（这是测试版；稳定版仍为 `v1.3.1`）。
+1. 从 Release 页面下载 `Cirno-Recycle-Plus-v1.4.0.zip`。
 2. 在 Magisk / KernelSU / APatch 里刷入（**建议在已开机的系统里刷**，这样刷入时就能自动装 APK；recovery 刷入也能用，只是 APK 要等开机后由 `service.sh` 自动补装）：
    - 刷入时会**自动安装配套 APK**（`com.flyingr.cirnorecycle`），并创建配置目录 `/data/misc/CirnoRecycle`；
    - 如果安装时 PackageManager 还没就绪、导致 APK 安装失败，模块会在**下次开机后自动补装一次**。
@@ -260,12 +283,14 @@ powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
 
 # 一键构建（Linux / macOS / CI；macOS 自带 shasum，脚本已做兼容）
 bash scripts/package-module.sh
+bash scripts/package-ota-module.sh
 ```
 
 产物：
 
 - APK：`app/build/outputs/apk/release/app-release.apk`（仓库自带公开测试签名，见 [signing/README.md](signing/README.md)）
-- 模块 zip：`dist/Cirno-Recycle-Plus-v1.4.0-beta.2.zip`
+- 模块 zip：`dist/Cirno-Recycle-Plus-v1.4.0.zip`
+- ColorOS OTA 模块：`dist/Cirno-ColorOS17-OTA-Disabler-v1.4.0.zip`
 - 校验值：`dist/CHECKSUMS.txt`
 
 ## 目录结构
@@ -283,6 +308,7 @@ app/                        Android 应用（LSPosed 模块主体）
 module/                     刷入用的 Magisk/KernelSU/APatch 模块骨架
   customize.sh              刷入时自动安装 APK
   service.sh                开机兜底安装 / 修配置目录权限
+module-coloros17-ota/       独立的 ColorOS 17 系统更新禁用模块（不依赖主模块）
   action.sh                 模块「操作」按钮：打印状态 + 打开设置
 scripts/                    一键构建 / 打包脚本
 signing/                    公开测试签名密钥

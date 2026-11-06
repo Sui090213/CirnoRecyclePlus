@@ -15,6 +15,7 @@ import nep.timeline.cirno.entity.AppState;
 import nep.timeline.cirno.log.Log;
 import nep.timeline.cirno.services.AppService;
 import nep.timeline.cirno.threads.Handlers;
+import nep.timeline.cirno.utils.PushChannelGuard;
 import nep.timeline.cirno.virtuals.ProcessRecord;
 
 /**
@@ -52,6 +53,7 @@ public class MemoryService {
 
     private static final AtomicBoolean STARTED = new AtomicBoolean(false);
     private static final PsiMonitor.Stats PSI_STATS = new PsiMonitor.Stats();
+    private static final WatermarkGate WATERMARK = new WatermarkGate();
 
     private static volatile long lastCycleElapsed = 0L;
     private static volatile long lastForegroundCompactElapsed = 0L;
@@ -63,6 +65,7 @@ public class MemoryService {
     private static boolean unsupportedLogged = false;
     private static boolean psiUnsupportedLogged = false;
     private static boolean reclaimUnsupportedLogged = false;
+    private static boolean watermarkTriggeredLogged = false;
     private static boolean foregroundGroupLogged = false;
     private static String foregroundGroupDir;
 
@@ -108,15 +111,20 @@ public class MemoryService {
     private static void tick(MemorySettings settings) {
         if (!settings.enabled) {
             ForegroundGuard.restore();
+            WATERMARK.reset();
             lastLevel = -1;
             return;
         }
 
-        if (!CgroupMemory.isAvailable() && !PsiMonitor.isSupported()) {
+        // 深度回收如果配置为「不看压力」，即使 PSI 不可用也要按冻结时长检查。
+        if (settings.reapFrozenChildren && !settings.reapOnlyUnderPressure)
+            ProcessReaper.reap(settings);
+
+        if (!CgroupMemory.isAvailable() && !PsiMonitor.isSupported() && !settings.watermarkFallback) {
             if (!unsupportedLogged) {
                 unsupportedLogged = true;
                 Log.w("当前内核不支持内存回收: cgroup v2 = " + CgroupMemory.isAvailable()
-                        + ", PSI = " + PsiMonitor.isSupported());
+                        + ", PSI = " + PsiMonitor.isSupported() + ", 水位兜底 = " + settings.watermarkFallback);
             }
             return;
         }
@@ -137,20 +145,24 @@ public class MemoryService {
         boolean forced = handleForcedRequest(settings);
 
         boolean psiOk = PsiMonitor.isSupported() && PsiMonitor.read(PSI_STATS);
-        if (!psiOk) {
-            if (!forced) {
-                if (!PsiMonitor.isSupported() && !psiUnsupportedLogged) {
-                    psiUnsupportedLogged = true;
-                    Log.w("内核未开启 PSI (/proc/pressure/memory 不存在), 自动回收已停用 (手动回收仍可用)");
-                }
-                return;
+        int watermarkLevel = watermarkLevel(settings);
+        if (!psiOk && watermarkLevel == LEVEL_NORMAL && !forced) {
+            if (!PsiMonitor.isSupported() && !psiUnsupportedLogged) {
+                psiUnsupportedLogged = true;
+                Log.w("内核未开启 PSI (/proc/pressure/memory 不存在), 且可用内存未达到水位; "
+                        + "自动回收暂停 (手动回收仍可用)");
             }
+            return;
         }
 
-        int level = psiOk ? levelOf(settings, PSI_STATS) : LEVEL_MODERATE;
-        if (psiOk && level != lastLevel) {
+        int level = forced ? LEVEL_MODERATE
+                : Math.max(psiOk ? levelOf(settings, PSI_STATS) : LEVEL_NORMAL, watermarkLevel);
+        if (!forced && level != lastLevel) {
             lastLevel = level;
-            Log.i("内存压力变化: " + PSI_STATS.toShortString() + " -> " + levelName(level));
+            if (psiOk)
+                Log.i("内存压力变化: " + PSI_STATS.toShortString() + " -> " + levelName(level));
+            else
+                Log.i("内存压力变化: PSI 不可用, MemAvailable 水位 -> " + levelName(level));
         }
 
         if (level == LEVEL_NORMAL && !forced)
@@ -169,7 +181,26 @@ public class MemoryService {
         if (settings.foregroundColdCompact && settings.enableCompact)
             compactForegroundIfNeeded(settings, forced ? LEVEL_MODERATE : level);
 
+        if (settings.reapFrozenChildren && settings.reapOnlyUnderPressure && level != LEVEL_NORMAL)
+            ProcessReaper.reap(settings);
+
         reclaimCycle(settings, forced ? LEVEL_MODERATE : level, forced);
+    }
+
+    /** 读取 MemAvailable 水位; 同时维护迟滞状态并打一条触发日志. */
+    private static int watermarkLevel(MemorySettings settings) {
+        long total = CgroupMemory.getTotalMemBytes();
+        long available = CgroupMemory.getAvailableMemBytes();
+        int level = WATERMARK.level(settings, total, available);
+        if (level != LEVEL_NORMAL && !watermarkTriggeredLogged) {
+            watermarkTriggeredLogged = true;
+            Log.i("可用内存 " + formatBytes(available) + " / " + formatBytes(total)
+                    + " (" + String.format(java.util.Locale.US, "%.1f%%", total <= 0L ? 0.0 : available * 100.0 / total)
+                    + ") 低于水位, 按 MemAvailable 兜底回收");
+        } else if (level == LEVEL_NORMAL) {
+            watermarkTriggeredLogged = false;
+        }
+        return level;
     }
 
     /**
@@ -225,14 +256,16 @@ public class MemoryService {
 
         for (int round = 0; round < maxRounds; round++) {
             if (round > 0) {
-                if (!PsiMonitor.read(PSI_STATS))
+                boolean psiOk = PsiMonitor.isSupported() && PsiMonitor.read(PSI_STATS);
+                int nextLevel = Math.max(psiOk ? levelOf(settings, PSI_STATS) : LEVEL_NORMAL, watermarkLevel(settings));
+                if (nextLevel == LEVEL_NORMAL) {
+                    Log.i("内存压力已恢复 (PSI/水位), 提前结束本轮回收");
                     break;
-                if (pressureValue(PSI_STATS) <= settings.psiStopThreshold) {
+                }
+                if (psiOk && pressureValue(PSI_STATS) <= settings.psiStopThreshold && !WATERMARK.isActive()) {
                     Log.i("内存压力已降到 " + PSI_STATS.toShortString() + ", 提前结束本轮回收");
                     break;
                 }
-                if (levelOf(settings, PSI_STATS) == LEVEL_NORMAL)
-                    break;
             }
 
             List<Candidate> candidates = collectCandidates(settings);
@@ -453,6 +486,9 @@ public class MemoryService {
         for (ProcessRecord processRecord : appRecord.getProcessRecords()) {
             if (processRecord == null || processRecord.isDeathProcess())
                 continue;
+            // 推送通道进程不 compact: 内存回收不应该把消息长连接的页压出去.
+            if (PushChannelGuard.isPushProcess(processRecord.getProcessName()))
+                continue;
             if (CompactHelper.compact(processRecord))
                 count++;
         }
@@ -464,6 +500,10 @@ public class MemoryService {
      */
     private static boolean isReclaimable(AppRecord appRecord, MemorySettings settings) {
         if (appRecord == null || appRecord.isSystem())
+            return false;
+
+        // 专门承担系统推送的包整体跳过, 避免回收 / compact 把消息通道压掉.
+        if (PushChannelGuard.isPushPackage(appRecord.getPackageName()))
             return false;
 
         // 应用级选项: 长按面板里可以关掉「允许内存回收」, 比如对某个后台但需要保持热数据的应用.

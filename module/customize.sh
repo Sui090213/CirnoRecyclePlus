@@ -27,7 +27,7 @@ command -v set_perm >/dev/null 2>&1 || set_perm() { :; }
 command -v set_perm_recursive >/dev/null 2>&1 || set_perm_recursive() { :; }
 
 ui_print "********************************************"
-ui_print "- Cirno Recycle+ v1.4.0-beta.2 (作者: flyingr)"
+ui_print "- Cirno Recycle+ v1.4.0 (作者: flyingr)"
 ui_print "- 基于 Cirno (GPL-3.0) 二次修改"
 ui_print "********************************************"
 
@@ -265,5 +265,5 @@ ui_print "********************************************"
 ui_print "- 配置目录: /data/misc/CirnoRecycle"
 ui_print "- 运行日志: /data/misc/CirnoRecycle/log/current.log"
 ui_print "- millet 日志: /data/misc/CirnoRecycle/log/millet.log"
-ui_print "- 作者: flyingr  ·  版本: 1.4.0-beta.2  ·  GPL-3.0"
+ui_print "- 作者: flyingr  ·  版本: 1.4.0  ·  GPL-3.0"
 ui_print "********************************************"
