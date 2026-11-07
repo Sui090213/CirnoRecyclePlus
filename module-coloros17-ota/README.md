@@ -15,7 +15,7 @@
 
 ## 安装
 
-在 Magisk / KernelSU / APatch 里直接刷入 `Cirno-ColorOS17-OTA-Disabler-v1.4.0.zip`，重启即可。
+在 Magisk / KernelSU / APatch 里直接刷入 `Cirno-ColorOS17-OTA-Disabler-v1.4.1.zip`，重启即可。
 
 - 安装时会立即尝试禁用；recovery 刷入时由 `service.sh` 开机后补一次。
 - 如果系统之后又把某个包启用，`service.sh` 下次开机会重新禁用。

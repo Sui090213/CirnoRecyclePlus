@@ -32,8 +32,14 @@ public class AppOptions {
      */
     public boolean keepAudio = true;
 
-    /** 冻结时是否保留网络连接 (Android 15 及以下会调用 socketDestroy, 打开后跳过). */
-    public boolean keepNetwork = false;
+    /**
+     * 冻结时是否保留网络连接 (Android 15 及以下会调用 socketDestroy, 打开后跳过).
+     *
+     * <p>1.4.1 起默认 true: 断网副作用太大, 而且 socketDestroy 不会移除 iptables/nftables
+     * 规则, 代理/防火墙类应用被冻结后会出现「规则还在但整机网络不可用」.
+     * 旧配置文件里的 false 仍然生效, 但网络代理/文件选择器现在会被 isProtected 直接挡住.
+     */
+    public boolean keepNetwork = true;
 
     /** 冻结时是否保留闹钟 (默认移除, 打开后不移除, 推送类应用可以这样保活). */
     public boolean keepAlarms = false;

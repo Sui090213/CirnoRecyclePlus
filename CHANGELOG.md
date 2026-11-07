@@ -3,6 +3,30 @@
 本文件只记录 **Cirno Recycle+（二改版）** 相对上游 Cirno 的改动。上游自己的更新记录请见
 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)。
 
+## v1.4.1 — 2026-11-07（热修）
+
+### 修复
+
+- **文件选择器 / 文档提供器“刚点开就卡住”**
+  - 新增 `ActivityLaunchThawHook`：在 `ActivityTaskManagerService.startActivity*` 前解冻目标包，显式 Intent 按包名、文档类隐式 Intent 按 `PackageManager.resolveActivity()` 结果；
+  - 新增 `ContentProviderThawHook`：在 `getContentProvider*` 前按 authority 反查 provider 包并解冻；
+  - 新增 `sendActivityResult` 前按 token 解冻调用方，避免调用方在等待结果时被冻住；
+  - `ACTIVITY_PAUSED` 不再从可见集合移除，只有 `ACTIVITY_STOPPED / DESTROYED` 才安排冻结，冻结延迟改为 5 秒；
+  - `ProcessService` 新进程冻结延迟从 3 秒提高到 15 秒，避免冷启动时 Activity 还没 RESUMED 就被冻住。
+
+- **代理类应用导致整机网络不可用**
+  - 新增 `NetworkProxyGuard`：Clash / Clash Meta / FlClash / sing-box / SagerNet / v2rayNG / Shadowsocks / WireGuard / Tailscale / AdGuard / AFWall+ / NetGuard 等默认不自动冻结；
+  - `FilePickerGuard` 保护文件选择器 / 默认文档处理者；
+  - `FreezerService` 对文件选择器 / 网络代理跳过 `socketDestroy` 与 frozen 上报；
+  - `keepNetwork` 默认值改为 `true`，新配置默认不断 socket。
+
+- **ANR 抑制范围过宽**
+  - `AnrHelper` 只对确实被冻结的进程抑制 ANR；普通第三方 App 卡住时仍会弹系统 ANR，不再无提示卡死。
+
+### 版本
+
+- 热修 1.4.1，APK `versionCode=13`，主模块 `versionCode=14004`，OTA 模块 `versionCode=14004`。
+
 ## v1.4.0 — 2026-11-06
 
 ### 新增

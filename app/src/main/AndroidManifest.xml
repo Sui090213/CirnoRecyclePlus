@@ -24,7 +24,7 @@
             android:value="flyingr" />
         <meta-data
             android:name="com.flyingr.version"
-            android:value="1.4.0" />
+            android:value="1.4.1" />
 
         <activity
             android:name=".ApplicationActivity"

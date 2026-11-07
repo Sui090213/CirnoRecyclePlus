@@ -214,7 +214,7 @@ adb shell 'for f in /sys/fs/cgroup/*/uid_*/pid_*/cgroup.freeze; do [ "$(cat $f)"
 |---|---|---|
 | `enabled` | `true` | 参与自动冻结；false 时这个应用永远不冻结（仍可被内存回收） |
 | `keepAudio` | `true` | 后台播放音频时跳过冻结；关掉后播放中也会冻 |
-| `keepNetwork` | `false` | 冻结时保留网络连接（Android 15 及以下跳过 `socketDestroy`） |
+| `keepNetwork` | `true`（v1.4.1 起） | 冻结时保留网络连接（Android 15 及以下跳过 `socketDestroy`）；旧配置里的 false 仍生效 |
 | `keepAlarms` | `false` | 冻结时保留闹钟（跳过 `ForceAppStandbyListener.removeAlarmsForUid`） |
 | `allowReclaim` | `true` | 允许内存回收模块回收这个应用 |
 | `wakeOnPush` | `true` | 收到 FCM / 厂商推送广播时临时解冻 15 秒（v1.2.1） |
@@ -295,6 +295,16 @@ App 与 system_server 不在同一进程，也没有现成的 binder 接口，�
 - **软重启取舍**：如果操作已经写进文件、但 system_server 还没来得及执行就软重启（LSPosed 环境常见），
   重启后第一次看到该文件会把它登记为「基线」而不是重放，避免开机时突然冻结某些应用。
   这种情况下 App 里会显示「已发送」但状态没变，再点一次即可（界面上也会提示「操作已发送，正在执行…」后无结果）。
+
+## 13.4 文件选择器 / ContentProvider / 代理保护（v1.4.1）
+
+v1.4.1 增加了三类“冻结前解冻 / 默认保护”：
+
+- **Activity 启动前**：hook `ActivityTaskManagerService.startActivity*`，显式 Intent 按包名、文档类隐式 Intent 按 `PackageManager.resolveActivity()` 结果解冻目标包；
+- **ContentProvider 查询前**：hook `ContentProviderHelper` / `ActivityManagerService` 的 `getContentProvider*`，按 authority 反查 provider 包并解冻；
+- **Activity 结果返回前**：hook `sendActivityResult`，按 `resultTo` token 找到调用方并解冻。
+
+另外，`FilePickerGuard` 保护文件选择器 / 默认文档处理者，`NetworkProxyGuard` 保护常见 TProxy / 防火墙应用；`FreezerService` 对这两类包跳过 `socketDestroy`，`AnrHelper` 只对确实冻结的进程抑制 ANR。
 
 ## 13.5 长时间冻结后的子进程深度回收（v1.4.0）
 

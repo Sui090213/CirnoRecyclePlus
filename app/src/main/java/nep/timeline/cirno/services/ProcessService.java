@@ -24,7 +24,10 @@ public class ProcessService {
             appRecord.getProcessRecords().add(processRecord);
         }
 
-        FreezerHandler.sendFreezeMessage(appRecord, 3000);
+        // 新进程可能正是被 Activity 启动起来的. 3 秒太短, 冷启动 / 低内存时 Activity
+        // 还没 RESUMED 就被冻住, 会直接卡在启动窗口. 给 15 秒让 Activity/Provider 先就绪;
+        // 真正退到后台时 ActivityStatsHook 还会重新安排一次冻结.
+        FreezerHandler.sendFreezeMessage(appRecord, 15_000);
     }
 
     public static void removeProcessRecord(ProcessRecord processRecord) {

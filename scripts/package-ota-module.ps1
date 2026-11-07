@@ -27,7 +27,7 @@ if (-not (Test-Path $propFile)) {
     throw "Cannot find module-coloros17-ota/module.prop"
 }
 
-$version = '1.4.0'
+$version = '1.4.1'
 foreach ($line in Get-Content $propFile) {
     if ($line -match '^\s*version\s*=\s*(.+)$') {
         $version = $Matches[1].Trim().TrimStart('v', 'V')

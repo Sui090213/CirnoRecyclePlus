@@ -29,18 +29,18 @@ $git = 'D:\deepseek\tools\git\cmd\git.exe'
 如果开了两步验证，密码位置要填 **Personal Access Token**（GitHub → Settings → Developer settings
 → Personal access tokens → Fine-grained tokens，勾选该仓库的 `Contents: Read and write`）。
 
-## 3. 打 tag 并发布 v1.4.0
+## 3. 打 tag 并发布 v1.4.1
 
 ```powershell
-& $git tag -a v1.4.0 -m "Cirno Recycle+ v1.4.0"
+& $git tag -a v1.4.1 -m "Cirno Recycle+ v1.4.1"
 & $git push origin main
-& $git push origin v1.4.0
+& $git push origin v1.4.1
 ```
 
 推送 tag 后，`.github/workflows/release.yml` 会自动：
 
 1. 用 JDK 25 + Android SDK 36 构建 Release APK（仓库自带公开签名密钥，自动签名）；
-2. 跑 `scripts/package-module.sh` 打包成 `dist/Cirno-Recycle-Plus-v1.4.0.zip`，并跑 `scripts/package-ota-module.sh` 打包独立 ColorOS OTA 模块；
+2. 跑 `scripts/package-module.sh` 打包成 `dist/Cirno-Recycle-Plus-v1.4.1.zip`，并跑 `scripts/package-ota-module.sh` 打包独立 ColorOS OTA 模块；
 3. 创建 GitHub Release，上传模块 zip 和 `CHECKSUMS.txt`。
 
 > 如果不想让 Actions 自动建 Release（例如想手动上传 APK / 源码包），可以先不推 tag，
@@ -59,11 +59,11 @@ $git = 'D:\deepseek\tools\git\cmd\git.exe'
 
 ```json
 {
-  "version": "v1.4.0",
-  "versionCode": 14003,
-  "zipUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/download/v1.4.0/Cirno-Recycle-Plus-v1.4.0.zip",
-  "apkUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/download/v1.4.0/Cirno-Recycle-Plus-v1.4.0.apk",
-  "releaseUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/tag/v1.4.0",
+  "version": "v1.4.1",
+  "versionCode": 14004,
+  "zipUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/download/v1.4.1/Cirno-Recycle-Plus-v1.4.1.zip",
+  "apkUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/download/v1.4.1/Cirno-Recycle-Plus-v1.4.1.apk",
+  "releaseUrl": "https://github.com/<你的用户名>/CirnoRecyclePlus/releases/tag/v1.4.1",
   "changelog": "https://raw.githubusercontent.com/<你的用户名>/CirnoRecyclePlus/main/CHANGELOG.md"
 }
 ```
@@ -90,10 +90,10 @@ powershell -ExecutionPolicy Bypass -File scripts\package-ota-module.ps1
 
 产物在 `dist\`：
 
-- `Cirno-Recycle-Plus-v1.4.0.zip`：可直接刷入的主模块（里面带 `apk/CirnoRecyclePlus.apk`）
-- `Cirno-ColorOS17-OTA-Disabler-v1.4.0.zip`：独立的 ColorOS 17 系统更新禁用模块
-- `Cirno-Recycle-Plus-v1.4.0.apk`：独立 APK（可从 `app/build/outputs/apk/release/app-release.apk` 复制）
-- `Cirno-Recycle-Plus-v1.4.0-source.zip`：源码包
+- `Cirno-Recycle-Plus-v1.4.1.zip`：可直接刷入的主模块（里面带 `apk/CirnoRecyclePlus.apk`）
+- `Cirno-ColorOS17-OTA-Disabler-v1.4.1.zip`：独立的 ColorOS 17 系统更新禁用模块
+- `Cirno-Recycle-Plus-v1.4.1.apk`：独立 APK（可从 `app/build/outputs/apk/release/app-release.apk` 复制）
+- `Cirno-Recycle-Plus-v1.4.1-source.zip`：源码包
 - `CHECKSUMS.txt`：SHA256
 
 ## 6. 发布前自检清单

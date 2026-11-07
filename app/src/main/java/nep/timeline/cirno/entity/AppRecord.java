@@ -9,7 +9,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import lombok.Data;
 import nep.timeline.cirno.CommonConstants;
 import nep.timeline.cirno.configs.checkers.AppConfigs;
+import nep.timeline.cirno.utils.FilePickerGuard;
 import nep.timeline.cirno.utils.InputMethodData;
+import nep.timeline.cirno.utils.NetworkProxyGuard;
 import nep.timeline.cirno.utils.PKGUtils;
 import nep.timeline.cirno.virtuals.ProcessRecord;
 
@@ -77,6 +79,16 @@ public class AppRecord {
         // 这时才绕过系统应用 / 内置白名单保护.
         if (CommonConstants.isGoogleFamily(packageName))
             return !AppConfigs.isGoogleFreezeAllowed(packageName, userId);
+
+        // 文件选择器 / 文档提供器: 冻住后系统启动 Activity、查询 ContentProvider 会一直等,
+        // 表现就是「刚点开文件管理器就卡住」.
+        if (FilePickerGuard.isFilePicker(packageName))
+            return true;
+
+        // TProxy / 防火墙类应用: 规则还在, 但用户态进程被冻住后整机流量会断.
+        if (NetworkProxyGuard.isNetworkProxy(packageName))
+            return true;
+
         return PKGUtils.isSystemApp(applicationInfo) || CommonConstants.isWhitelistApps(packageName);
     }
 

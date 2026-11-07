@@ -15,7 +15,7 @@ import nep.timeline.cirno.configs.settings.ApplicationSettings
 data class AppOptionsValue(
     val enabled: Boolean = true,
     val keepAudio: Boolean = true,
-    val keepNetwork: Boolean = false,
+    val keepNetwork: Boolean = true,
     val keepAlarms: Boolean = false,
     val allowReclaim: Boolean = true,
     val wakeOnPush: Boolean = true,

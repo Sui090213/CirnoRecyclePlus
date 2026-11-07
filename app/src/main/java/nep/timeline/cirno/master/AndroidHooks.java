@@ -4,8 +4,10 @@ import android.os.Build;
 import android.os.FileObserver;
 
 import nep.timeline.cirno.configs.ConfigFileObserver;
+import nep.timeline.cirno.hooks.android.activity.ActivityLaunchThawHook;
 import nep.timeline.cirno.hooks.android.activity.ActivityManagerServiceHook;
 import nep.timeline.cirno.hooks.android.activity.ActivityStatsHook;
+import nep.timeline.cirno.hooks.android.activity.ContentProviderThawHook;
 import nep.timeline.cirno.hooks.android.activity.ServiceStartHook;
 import nep.timeline.cirno.hooks.android.alarms.AlarmManagerService;
 import nep.timeline.cirno.hooks.android.anr.ANRErrorStateHook;
@@ -78,6 +80,10 @@ public class AndroidHooks {
         // Activity
         new ActivityManagerServiceHook(classLoader);
         new ActivityStatsHook(classLoader);
+        // 启动 Activity / 查询 ContentProvider / 返回结果前解冻目标进程.
+        // 必须在 ActivityStatsHook 之后安装: 结果返回时要用它维护的 token -> AppRecord 映射.
+        new ActivityLaunchThawHook(classLoader);
+        new ContentProviderThawHook(classLoader);
         // 服务启动 / 绑定唤醒 (推送 service / 后台任务)
         new ServiceStartHook(classLoader);
         // Process

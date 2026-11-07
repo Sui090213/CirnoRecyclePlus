@@ -15,8 +15,10 @@ import nep.timeline.cirno.entity.AppState;
 import nep.timeline.cirno.log.Log;
 import nep.timeline.cirno.threads.FreezerHandler;
 import nep.timeline.cirno.threads.Handlers;
+import nep.timeline.cirno.utils.FilePickerGuard;
 import nep.timeline.cirno.utils.ForceAppStandbyListener;
 import nep.timeline.cirno.utils.FrozenRW;
+import nep.timeline.cirno.utils.NetworkProxyGuard;
 import nep.timeline.cirno.virtuals.ProcessRecord;
 
 public class FreezerService {
@@ -241,13 +243,20 @@ public class FreezerService {
             Handlers.alarms.post(() -> ForceAppStandbyListener.removeAlarmsForUid(appRecord));
 
         if (!options.keepNetwork) {
-            Handlers.network.post(() -> {
-                if (Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-                    CachedAppOptimizer.reportOneUidFrozenStateChanged(appRecord.getUid(), true);
-                    return;
-                }
-                NetworkManagementService.socketDestroy(appRecord);
-            });
+            // 文件选择器 / 网络代理被冻住后断网会直接影响整机可用性; 这些包现在也会被
+            // isProtected 提前挡住, 这里再兜一层, 防止旧冻结状态走到 socketDestroy.
+            if (FilePickerGuard.isFilePicker(appRecord.getPackageName())
+                    || NetworkProxyGuard.isNetworkProxy(appRecord.getPackageName())) {
+                Log.d(appRecord.getPackageNameWithUser() + " 文件选择器 / 网络代理保护, 跳过断网");
+            } else {
+                Handlers.network.post(() -> {
+                    if (Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                        CachedAppOptimizer.reportOneUidFrozenStateChanged(appRecord.getUid(), true);
+                        return;
+                    }
+                    NetworkManagementService.socketDestroy(appRecord);
+                });
+            }
         } else {
             // keepNetwork 打开时:
             // - Android 15 及以下: 跳过 socketDestroy;
@@ -444,7 +453,7 @@ public class FreezerService {
     }
 
     /** 是否有存活且已冻结的进程. */
-    private static boolean hasFrozenProcess(AppRecord appRecord) {
+    public static boolean hasFrozenProcess(AppRecord appRecord) {
         for (ProcessRecord processRecord : appRecord.getProcessRecords()) {
             if (processRecord != null && !processRecord.isDeathProcess() && processRecord.isFrozen())
                 return true;
@@ -553,7 +562,11 @@ public class FreezerService {
         for (AppRecord appRecord : appRecords) {
             if (appRecord == null || !packageName.equals(appRecord.getPackageName()))
                 continue;
-            if (appRecord.isProtected() || !appRecord.isFrozen())
+            if (appRecord.isProtected())
+                continue;
+            // 不能只看 isFrozen(): 进程级部分冻结时整应用标记可能还是 false,
+            // 但文件管理器/provider 所在进程已经被冻住. 启动前解冻必须覆盖这种情况.
+            if (!appRecord.isFrozen() && !appRecord.isReportedFrozen() && !hasFrozenProcess(appRecord))
                 continue;
             temporaryUnfreezeIfNeed(appRecord, reason, interval);
             held = true;

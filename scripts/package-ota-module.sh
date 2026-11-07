@@ -24,7 +24,7 @@ command -v zip >/dev/null 2>&1 || {
 }
 
 VERSION="$(grep -E '^\s*version\s*=' "$MODULE_DIR/module.prop" | head -n1 | cut -d= -f2 | tr -d ' \r' | sed 's/^[vV]//')"
-[ -n "$VERSION" ] || VERSION="1.4.0"
+[ -n "$VERSION" ] || VERSION="1.4.1"
 
 ZIP_NAME="Cirno-ColorOS17-OTA-Disabler-v${VERSION}.zip"
 ZIP_PATH="$OUTPUT_DIR/$ZIP_NAME"

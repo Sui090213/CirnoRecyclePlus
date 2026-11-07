@@ -9,11 +9,11 @@
 > **AI 制作声明**：本项目的大部分代码由 AI 生成 / AI 辅助完成，真人作者已完成测试和部分修改。**如果你介意 AI 参与开发，请不要使用本项目。**
 >
 > 基于 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)（原 [Nep-Timeline/Cirno](https://github.com/Nep-Timeline/Cirno)）**二次修改**
-> 作者：**flyingr** · 版本：**1.4.0** · 协议：**GPL-3.0**
+> 作者：**flyingr** · 版本：**1.4.1** · 协议：**GPL-3.0**
 
 **先说明：这是二改，不是原作者的作品。** 原项目「Cirno」的版权归 Nep-Timeline / Freezer-Team 所有，本仓库只是在其基础上加了内存回收和前台内存压制功能，并保持同样的 GPL-3.0 开源协议。
 
-**v1.4.0**：新增长时间冻结后的容器子进程深度回收（默认只写日志，用户可切换实际执行）、MemAvailable 水位迟滞兜底、严格第三方 / 推送通道过滤；保留配置导出 / 导入、Wallhaven / Picsum 在线图库、背景与配置 SHA-256 校验，以及长进程名 / 列表卡顿修复。另有独立的 **ColorOS 17 系统更新禁用模块**，可单独刷入。
+**v1.4.1（热修）**：修复文件选择器 / 文档提供器卡死与代理类应用网络中断。Activity 启动前、ContentProvider 查询前、返回结果前都会先解冻目标进程；`ACTIVITY_PAUSED` 不再当成进入后台；文件选择器、常见代理 / 防火墙应用默认受保护；ANR 只对确实被冻结的进程抑制。保留 v1.4.0 的长时间冻结深度回收、MemAvailable 水位兜底、严格第三方 / 推送过滤，以及独立的 **ColorOS 17 系统更新禁用模块**。
 
 ---
 
@@ -59,7 +59,7 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 | 24 | **FCM / 推送保护** | GMS、GSF、Play 商店等推送基础设施默认不冻结；推送广播到达时先解冻目标应用，并给 15 秒投递窗口；推送广播永不被「冻结进程跳过广播」拦掉 | ✅（单应用「收到推送时解冻」） |
 | 25 | **服务启动唤醒** | 冻结应用被 `startService` / `bindService` 拉起（部分 FCM 版本 / 厂商推送 / 后台任务）时，先解冻 15 秒让服务正常启动 | — |
 | 26 | **Google 全家桶可单独选择冻结** | 默认仍保护 GMS / GSF / Play 商店以免切断 FCM；不使用 FCM 时，可在应用列表里逐个打开「允许冻结 Google 服务」，再决定是否自动冻结 | ✅（单应用开关） |
-| 26 | **保留网络连接（Android 16 修复）** | 打开应用的「冻结时保留网络连接」后，Android 16 上也不再上报 frozen 状态、不再切断网络 | ✅（单应用开关） |
+| 26 | **保留网络连接（Android 16 修复）** | v1.4.1 起默认保留网络连接；打开后 Android 16 上也不再上报 frozen 状态、不再切断网络 | ✅（单应用开关，默认开） |
 | 27 | **底栏三页 + 顶部搜索** | 主界面改成「软件列表 / 设置 / 关于」三个底栏页面；软件列表顶部常驻搜索框，模块名称和激活状态收进底栏 | — |
 | 28 | **自定义背景** | 支持本地图片、网络链接、内置渐变；不透明度和压暗程度可调，背景会透到列表、设置、底栏和卡片 | ✅ |
 | 29 | **页面切换 / 返回动画** | 详情页和三页切换统一用滑动 + 淡入淡出，返回键和系统返回手势都会走动画 | — |
@@ -85,9 +85,18 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 
 这条策略的目的不是「杀后台」，而是：在长冻结场景下先回收微信小程序 / WebView 这类几百 MB 的容器进程，避免系统 LMK 直接杀掉应用主进程。
 
+## v1.4.1 修复：文件选择 / 网络代理
+
+- **文件选择器 / 文档提供器不再被自动冻结**：`com.android.documentsui`、小米 / OPPO / 三星文件管理器、MT 管理器、Files by Google 等默认保护；用户把第三方文件管理器设为默认 `ACTION_GET_CONTENT` 处理者时也会动态识别。
+- **启动前解冻**：`ActivityTaskManagerService.startActivity` 前先解冻目标包；ContentProvider 查询前按 authority 反查包并解冻；Activity 结果返回前解冻调用方。这样不会出现「目标进程冻住 -> Activity 永远无法 RESUMED -> 刚点开就卡」的死锁。
+- **PAUSED 不再等于后台**：`ACTIVITY_PAUSED` 时保留可见状态，只有 `ACTIVITY_STOPPED / DESTROYED` 才安排冻结，并给 5 秒缓冲。
+- **代理 / 防火墙默认保护**：Clash、Clash Meta、FlClash、sing-box / SagerNet、v2rayNG、Shadowsocks、WireGuard、Tailscale、AdGuard、AFWall+、NetGuard 等不再自动冻结；避免 iptables/nftables 规则还在、用户态进程被冻住导致整机断网。
+- **`keepNetwork` 默认改为 true**：新配置默认不断 socket；旧配置里的 false 仍然有效，但文件选择器 / 代理包会被 `isProtected` 直接挡住。
+- **ANR 只对确实冻结的进程抑制**：普通第三方 App 卡住时系统仍会弹 ANR，不再表现为无提示的纯卡死。
+
 ## 独立模块：ColorOS 17 系统更新禁用
 
-仓库额外提供一个**独立可选模块**：`Cirno-ColorOS17-OTA-Disabler-v1.4.0.zip`。
+仓库额外提供一个**独立可选模块**：`Cirno-ColorOS17-OTA-Disabler-v1.4.1.zip`。
 
 - 只针对 OPPO / OnePlus / realme 的 ColorOS 17（兼容 ColorOS 12+）；
 - 用 `pm disable-user` / `pm suspend` 禁用已知 OTA 包，不改 system 分区；
@@ -103,7 +112,7 @@ Cirno 负责「把后台应用冻住省 CPU」，Cirno Recycle+ 在它基础上�
 
 **步骤**
 
-1. 从 Release 页面下载 `Cirno-Recycle-Plus-v1.4.0.zip`。
+1. 从 Release 页面下载 `Cirno-Recycle-Plus-v1.4.1.zip`。
 2. 在 Magisk / KernelSU / APatch 里刷入（**建议在已开机的系统里刷**，这样刷入时就能自动装 APK；recovery 刷入也能用，只是 APK 要等开机后由 `service.sh` 自动补装）：
    - 刷入时会**自动安装配套 APK**（`com.flyingr.cirnorecycle`），并创建配置目录 `/data/misc/CirnoRecycle`；
    - 如果安装时 PackageManager 还没就绪、导致 APK 安装失败，模块会在**下次开机后自动补装一次**。
@@ -289,8 +298,8 @@ bash scripts/package-ota-module.sh
 产物：
 
 - APK：`app/build/outputs/apk/release/app-release.apk`（仓库自带公开测试签名，见 [signing/README.md](signing/README.md)）
-- 模块 zip：`dist/Cirno-Recycle-Plus-v1.4.0.zip`
-- ColorOS OTA 模块：`dist/Cirno-ColorOS17-OTA-Disabler-v1.4.0.zip`
+- 模块 zip：`dist/Cirno-Recycle-Plus-v1.4.1.zip`
+- ColorOS OTA 模块：`dist/Cirno-ColorOS17-OTA-Disabler-v1.4.1.zip`
 - 校验值：`dist/CHECKSUMS.txt`
 
 ## 目录结构

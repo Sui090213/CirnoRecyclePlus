@@ -28,7 +28,7 @@ public class AppOptionsLogicTest {
         assertTrue("默认允许内存回收", options.allowReclaim);
         assertTrue("默认收到推送时解冻", options.wakeOnPush);
         assertFalse("默认不允许冻结 Google 服务", options.allowFreezeGoogle);
-        assertFalse("默认不保留网络", options.keepNetwork);
+        assertTrue("1.4.1 起默认保留网络, 避免 socketDestroy 断网", options.keepNetwork);
         assertFalse("默认不保留闹钟", options.keepAlarms);
         assertEquals(AppOptions.PROCESS_MODE_ALL, options.processMode);
     }

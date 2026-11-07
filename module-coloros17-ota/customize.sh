@@ -12,7 +12,7 @@ command -v ui_print >/dev/null 2>&1 || ui_print() { echo "$1"; }
 command -v abort >/dev/null 2>&1 || abort() { echo "$1"; exit 1; }
 
 ui_print "********************************************"
-ui_print "- Cirno ColorOS 17 系统更新禁用 v1.4.0"
+ui_print "- Cirno ColorOS 17 系统更新禁用 v1.4.1"
 ui_print "- 作者: flyingr  ·  独立可选模块"
 ui_print "********************************************"
 
