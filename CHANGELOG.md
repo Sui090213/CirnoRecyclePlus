@@ -3,6 +3,49 @@
 本文件只记录 **Cirno Recycle+（二改版）** 相对上游 Cirno 的改动。上游自己的更新记录请见
 [Freezer-Team/Cirno](https://github.com/Freezer-Team/Cirno)。
 
+## v1.5-beta — 2026-11-14（测试版，未发布）
+
+> 仅供测试：本版本不发布 Release、不更新 `update.json`。
+
+### 新增
+
+- **悬浮窗 / 画中画豁免**
+  - 新增 `WindowAddHook` / `WindowViewVisibilityHook` / `WindowAppOpVisibilityHook` /
+    `WindowAppOpStateInitHook` / `WindowRemoveHook`，跟踪 `TYPE_APPLICATION_OVERLAY` 窗口；
+  - `AppState` 增加 window token 三集合，`overlay = 应用侧可见 ∩ AppOps 允许`，支持多窗口；
+  - `OverlayHandler` 缓存 AppOps / 可见性回调早于 `addWindow` 的时序竞态；
+  - 悬浮窗可见时自动解冻，不可见 / 移除后重新安排冻结；`RuntimeState` 增加 `overlay` 状态。
+
+- **当前输入法开机兜底**
+  - `InputMethodData.initFromSettingsWithRetry()` 在 `system_server` 就绪后从
+    `Settings.Secure.DEFAULT_INPUT_METHOD` 恢复当前输入法并解冻，最多重试 60 次；
+  - 切换输入法时解冻新 IME、旧 IME 3 秒后回收；`thaw / 重新冻结` 移到 `InputMethodData` 锁外；
+  - `mMethodMap` 解析失败后每次重试，不再永久放弃。
+
+- **自动填充 / 通行密钥会话豁免**
+  - 新增 `AutofillData` / `CredentialData` 会话表，按 session 引用计数；
+  - `AutofillManagerServiceImplHook` / `AutofillSessionRemoveHook` /
+    `CredentialManagerServiceImplHook` / `CredentialRequestSessionFinishHook`：会话开始时解冻，
+    没有活跃会话后重新安排冻结；
+  - `AppRecord.isProtected()` 动态包含当前输入法、活跃自动填充 / 通行密钥 provider。
+
+### 修复
+
+- `ProcessService`：同名进程被新 pid 替换时解冻旧 pid；删除记录带身份校验，防止误删同名新进程；
+  cgroup 写入移到锁外；热路径 `getProcessRecord(Object)` 不再构造完整包装。
+- `SendSignalHook` / `SendSignalQuietHook`：SIGKILL 路径改走 `removeProcessRecordWithoutThawIfCurrent`。
+- `PendingIntentHook`：不再持有 `PendingIntentController.mLock` 做 cgroup I/O。
+- `FreezerService`：`socketDestroy` / `reportOneUidFrozenStateChanged` 在异步线程内二次复核
+  `isFrozen()`，避免刚解冻就被断网。
+- `ContentProviderThawHook`：不再把“第一个 String 参数”当 authority（`getContentProvider` 的
+  第二个参数是 callingPackage），改为逐个尝试解析并缓存正结果。
+- `ConfigFileObserver`：配置目录被删除/移动后重新 `startWatching()`，避免热更新永久失效。
+
+### 版本
+
+- 测试版 1.5-beta，APK `versionCode=14`、`versionName=1.5-beta`；主模块 `versionCode=15000`。
+- OTA 模块未改动，保持 `v1.4.1 / 14004`。
+
 ## v1.4.1 — 2026-11-07（热修）
 
 ### 修复

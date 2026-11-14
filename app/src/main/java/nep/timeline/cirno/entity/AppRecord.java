@@ -9,6 +9,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import lombok.Data;
 import nep.timeline.cirno.CommonConstants;
 import nep.timeline.cirno.configs.checkers.AppConfigs;
+import nep.timeline.cirno.utils.AutofillData;
+import nep.timeline.cirno.utils.CredentialData;
 import nep.timeline.cirno.utils.FilePickerGuard;
 import nep.timeline.cirno.utils.InputMethodData;
 import nep.timeline.cirno.utils.NetworkProxyGuard;
@@ -72,7 +74,15 @@ public class AppRecord {
     public boolean isProtected() {
         if (packageName == null)
             return true;
-        if (equals(InputMethodData.currentInputMethodApp))
+        // 当前输入法必须永久保护: 输入法被冻时系统发不出 show 请求, 没有安全的唤醒路径.
+        // 按包名判断, 这样开机兜底 (InputMethodData.refreshFromSettings) 建立的保护也能命中.
+        if (InputMethodData.isCurrentInputMethodPackage(packageName))
+            return true;
+        // 自动填充 / 通行密钥服务只在会话期间保护: 会话是它们的真实生命周期, 会话结束后
+        // 必须允许重新冻结, 否则密码管理器/密钥提供方会长期常驻.
+        if (AutofillData.hasActiveSession(this))
+            return true;
+        if (CredentialData.hasActiveSession(this))
             return true;
         // Google 服务默认受保护 (防止冻结 GMS 后 FCM 推送收不到).
         // 用户在不使用 FCM 时可以在应用面板里显式打开「允许冻结 Google 服务」,

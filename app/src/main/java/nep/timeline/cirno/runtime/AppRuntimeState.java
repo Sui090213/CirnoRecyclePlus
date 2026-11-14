@@ -24,6 +24,8 @@ public class AppRuntimeState {
     public boolean location;
     public boolean recording;
     public boolean vpn;
+    /** 正在显示悬浮窗 (应用侧可见 + AppOps 允许, 两个来源的交集). */
+    public boolean overlay;
 
     /** 应用的所有存活进程. */
     public List<ProcessRuntimeState> processes = new ArrayList<>();

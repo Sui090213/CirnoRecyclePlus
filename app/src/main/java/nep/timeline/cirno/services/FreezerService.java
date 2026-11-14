@@ -95,6 +95,10 @@ public class FreezerService {
 
         if (appState.isVisible())
             return;
+        // 悬浮窗可见时必须保留运行: 应用可能没有前台 Activity, 但用户正看着它的悬浮窗.
+        // 两个可见性来源 (WindowState.setViewVisibility + AppOps) 的交集在 OverlayHandler 里维护.
+        if (appState.isOverlay())
+            return;
         if (!forceGoogle && (appState.isLocation() || appState.isRecording() || appState.isVpn()))
             return;
         // 正在后台播放音频: 默认跳过 (关掉该应用的「播放音频时不冻结」后才会冻).
@@ -250,6 +254,9 @@ public class FreezerService {
                 Log.d(appRecord.getPackageNameWithUser() + " 文件选择器 / 网络代理保护, 跳过断网");
             } else {
                 Handlers.network.post(() -> {
+                    // 冻结后毫秒级被解冻的场景: 不能把已经恢复运行的应用的连接断掉 / 上报成冻结.
+                    if (!appRecord.isFrozen())
+                        return;
                     if (Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM) {
                         CachedAppOptimizer.reportOneUidFrozenStateChanged(appRecord.getUid(), true);
                         return;
@@ -475,6 +482,8 @@ public class FreezerService {
         if (appState == null)
             return false;
         if (appState.isVisible() || appState.isLocation() || appState.isRecording() || appState.isVpn())
+            return false;
+        if (appState.isOverlay())
             return false;
         if (appState.isAudio() && options.keepAudio)
             return false;

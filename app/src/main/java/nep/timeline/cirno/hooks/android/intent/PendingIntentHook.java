@@ -40,23 +40,24 @@ public class PendingIntentHook extends MethodHook {
         return new CakeHooker.Callback() {
             @Override
             public void call(CakeHooker.BeforeHookCallback callback) {
-                synchronized (CakeReflection.getObjectField(CakeReflection.getObjectField(callback.getThisObject(), "controller"), "mLock")) {
-                    if (CakeReflection.getBooleanField(callback.getThisObject(), "canceled"))
-                        return;
+                // 不持有 PendingIntentController.mLock: sendInner 是全系统 PendingIntent
+                // (闹钟/通知点击/widget) 的热路径, 在 mLock 内做 cgroup 写 I/O 会放大锁争用.
+                // canceled / key 都是 final 字段, 无锁读最多多检查一次, 不会误放行已取消的请求.
+                if (CakeReflection.getBooleanField(callback.getThisObject(), "canceled"))
+                    return;
 
-                    Object key = CakeReflection.getObjectField(callback.getThisObject(), "key");
-                    if (key == null)
-                        return;
+                Object key = CakeReflection.getObjectField(callback.getThisObject(), "key");
+                if (key == null)
+                    return;
 
-                    PendingIntentKey pendingIntentKey = new PendingIntentKey(key);
+                PendingIntentKey pendingIntentKey = new PendingIntentKey(key);
 
-                    AppRecord appRecord = AppService.get(pendingIntentKey.getPackageName(), pendingIntentKey.getUserId());
+                AppRecord appRecord = AppService.get(pendingIntentKey.getPackageName(), pendingIntentKey.getUserId());
 
-                    if (appRecord == null || !appRecord.isFrozen())
-                        return;
+                if (appRecord == null || !appRecord.isFrozen())
+                    return;
 
-                    FreezerService.temporaryUnfreezeIfNeed(appRecord, "Intent", 3000);
-                }
+                FreezerService.temporaryUnfreezeIfNeed(appRecord, "Intent", 3000);
             }
         };
     }

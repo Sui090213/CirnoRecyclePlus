@@ -29,9 +29,9 @@ public class ProcessRemoveHook extends MethodHook {
         return new CakeHooker.Callback() {
             @Override
             public void call(CakeHooker.BeforeHookCallback callback) {
-                String name = (String) callback.getArgs()[0];
-                int uid = (int) callback.getArgs()[1];
-                ProcessService.removeProcessRecord(name, uid);
+                // 用 AMS 传进来的 ProcessRecord 原始对象做身份校验: 同 name/uid 的新进程
+                // 可能已经注册, 只按 name+uid 删除会误删新记录并解冻新 pid.
+                ProcessService.removeProcessRecordIfCurrent(callback.getArgs()[2]);
             }
         };
     }

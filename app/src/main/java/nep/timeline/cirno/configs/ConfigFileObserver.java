@@ -31,15 +31,22 @@ public class ConfigFileObserver extends FileObserver {
         handler.removeCallbacksAndMessages(null);
         switch (event & ALL_EVENTS) {
             case DELETE:
-            case DELETE_SELF: {
+            case DELETE_SELF:
+            case MOVE_SELF: {
                 handler.postDelayed(() -> {
-                    ConfigManager.readConfig();
+                    // 目录被删除/移动后, 内核会移除 inotify watch; 必须重新注册,
+                    // 否则之后 App 再写配置永远收不到事件 (热更新静默失效).
                     reInit();
+                    try {
+                        startWatching();
+                    } catch (Throwable throwable) {
+                        nep.timeline.cirno.log.Log.w("重新注册配置监听失败", throwable);
+                    }
+                    ConfigManager.readConfig();
                 }, 2000);
                 break;
             }
             case MODIFY:
-            case MOVE_SELF:
             case CREATE:
             case MOVED_TO:
             case CLOSE_WRITE: {

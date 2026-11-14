@@ -41,7 +41,9 @@ public class SendSignalHook extends MethodHook {
                 if (processRecord == null || processRecord.isDeathProcess())
                     return;
 
-                ProcessService.removeProcessRecord(processRecord);
+                // 正在被 SIGKILL 的进程已经要死了: 这里只做记录清理 + 幂等写 freeze=0,
+                // 不能走普通 remove 路径打日志/重新安排冻结.
+                ProcessService.removeProcessRecordWithoutThawIfCurrent(processRecord, "SIGKILL");
             }
         };
     }

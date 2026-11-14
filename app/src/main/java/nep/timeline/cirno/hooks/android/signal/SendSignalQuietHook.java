@@ -41,7 +41,7 @@ public class SendSignalQuietHook extends MethodHook {
                 if (processRecord == null || processRecord.isDeathProcess())
                     return;
 
-                ProcessService.removeProcessRecord(processRecord);
+                ProcessService.removeProcessRecordWithoutThawIfCurrent(processRecord, "SIGKILL(quiet)");
             }
         };
     }

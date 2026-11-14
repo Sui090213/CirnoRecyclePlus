@@ -76,25 +76,35 @@ public class ContentProviderThawHook {
 
     private static void handle(Object[] args) {
         try {
-            String authority = null;
+            // 不能假设「第一个 String 参数就是 authority」: getContentProvider 的签名是
+            // (caller, callingPackage, name, ...), callingPackage 也是 String. 逐个尝试解析,
+            // 第一个能解析成已注册 provider 的才当作 authority; 正结果做小缓存, 避免每次
+            // provider 访问都重复查 PMS.
             for (Object arg : args) {
-                if (arg instanceof String value && !value.isEmpty()) {
-                    authority = value;
-                    break;
+                if (!(arg instanceof String authority) || authority.isEmpty())
+                    continue;
+                String packageName = resolveProviderPackage(authority);
+                if (packageName != null && !packageName.isEmpty()) {
+                    FreezerService.temporaryUnfreezeIfFrozenByPackage(
+                            packageName, "查询 ContentProvider " + authority, 15_000);
+                    return;
                 }
             }
-            if (authority == null)
-                return;
-
-            String packageName = resolveProviderPackage(authority);
-            if (packageName != null && !packageName.isEmpty())
-                FreezerService.temporaryUnfreezeIfFrozenByPackage(packageName, "查询 ContentProvider", 15_000);
         } catch (Throwable ignored) {
             // Hook 回调里的异常不能抛回 system_server.
         }
     }
 
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> AUTHORITY_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int AUTHORITY_CACHE_MAX = 512;
+
     private static String resolveProviderPackage(String authority) {
+        if (authority == null || authority.isEmpty())
+            return null;
+        String cached = AUTHORITY_CACHE.get(authority);
+        if (cached != null)
+            return cached;
         try {
             Context context = ActivityManagerService.getContext();
             if (context == null)
@@ -103,8 +113,11 @@ public class ContentProviderThawHook {
             if (packageManager == null)
                 return null;
             ProviderInfo info = packageManager.resolveContentProvider(authority, 0);
-            if (info == null)
+            if (info == null || info.packageName == null)
                 return null;
+            if (AUTHORITY_CACHE.size() > AUTHORITY_CACHE_MAX)
+                AUTHORITY_CACHE.clear();
+            AUTHORITY_CACHE.put(authority, info.packageName);
             return info.packageName;
         } catch (Throwable ignored) {
             return null;

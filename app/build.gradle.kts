@@ -19,8 +19,9 @@ configure<ApplicationExtension> {
         applicationId = "com.flyingr.cirnorecycle"
         minSdk = 31
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.4.1"
+        versionCode = 14
+        // beta 版本: 不发布正式 Release, 仅用于测试悬浮窗/输入法/自动填充豁免与冻结核心修复.
+        versionName = "1.5-beta"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

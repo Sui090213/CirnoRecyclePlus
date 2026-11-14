@@ -16,11 +16,15 @@ import nep.timeline.cirno.hooks.android.anr.ANRHook;
 import nep.timeline.cirno.hooks.android.audio.AudioStateHook;
 import nep.timeline.cirno.hooks.android.audio.PlayerBanHook;
 import nep.timeline.cirno.hooks.android.audio.SendMediaButtonHook;
+import nep.timeline.cirno.hooks.android.autofill.AutofillManagerServiceImplHook;
+import nep.timeline.cirno.hooks.android.autofill.AutofillSessionRemoveHook;
 import nep.timeline.cirno.hooks.android.binder.HansKernelUnfreezeHook;
 import nep.timeline.cirno.hooks.android.binder.MilletBinderTransHook;
 import nep.timeline.cirno.hooks.android.broadcast.BroadcastDeliveryHook;
 import nep.timeline.cirno.hooks.android.broadcast.BroadcastIntentHook;
 import nep.timeline.cirno.hooks.android.broadcast.BroadcastSkipHook;
+import nep.timeline.cirno.hooks.android.credentials.CredentialManagerServiceImplHook;
+import nep.timeline.cirno.hooks.android.credentials.CredentialRequestSessionFinishHook;
 import nep.timeline.cirno.hooks.android.input.InputMethodManagerService;
 import nep.timeline.cirno.hooks.android.intent.PendingIntentHook;
 import nep.timeline.cirno.hooks.android.location.ListenerRegisterHook;
@@ -36,6 +40,11 @@ import nep.timeline.cirno.hooks.android.signal.SendSignalHook;
 import nep.timeline.cirno.hooks.android.signal.SendSignalQuietHook;
 import nep.timeline.cirno.hooks.android.vpn.VpnStateHook;
 import nep.timeline.cirno.hooks.android.wakelock.WakeLockHook;
+import nep.timeline.cirno.hooks.android.window.WindowAddHook;
+import nep.timeline.cirno.hooks.android.window.WindowAppOpStateInitHook;
+import nep.timeline.cirno.hooks.android.window.WindowAppOpVisibilityHook;
+import nep.timeline.cirno.hooks.android.window.WindowRemoveHook;
+import nep.timeline.cirno.hooks.android.window.WindowViewVisibilityHook;
 import nep.timeline.cirno.memory.MemoryService;
 import nep.timeline.cirno.runtime.RuntimeStateService;
 import nep.timeline.cirno.services.BinderService;
@@ -65,6 +74,11 @@ public class AndroidHooks {
         new ListenerUnregisterHook(classLoader);
         // InputMethod
         new InputMethodManagerService(classLoader);
+        // Autofill / Credential: 会话期间解冻 provider, 会话结束后重新冻结
+        new AutofillManagerServiceImplHook(classLoader);
+        new AutofillSessionRemoveHook(classLoader);
+        new CredentialManagerServiceImplHook(classLoader);
+        new CredentialRequestSessionFinishHook(classLoader);
         // Network
         new NetworkManagerHook(classLoader);
         // Alarms
@@ -97,6 +111,12 @@ public class AndroidHooks {
         new ReleaseRecorderHook(classLoader);
         // Vpn
         new VpnStateHook(classLoader);
+        // Overlay / 悬浮窗: addWindow 不等于可见, 需要结合 setViewVisibility + AppOps
+        new WindowAddHook(classLoader);
+        new WindowViewVisibilityHook(classLoader);
+        new WindowAppOpStateInitHook(classLoader);
+        new WindowAppOpVisibilityHook(classLoader);
+        new WindowRemoveHook(classLoader);
         // Intent
         new PendingIntentHook(classLoader);
         // ReKernel
@@ -105,5 +125,8 @@ public class AndroidHooks {
         MemoryService.start();
         // Runtime state (冻结状态显示 / 手动进程冻结通道)
         RuntimeStateService.start();
+        // 开机兜底: 从 Settings 恢复当前输入法并解冻; 只靠 hook 的话, 开机后直接点输入框
+        // 时 currentInputMethodApp 还是 null, 第三方输入法会被当普通后台应用冻结.
+        nep.timeline.cirno.utils.InputMethodData.initFromSettingsWithRetry();
     }
 }

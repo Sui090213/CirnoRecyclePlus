@@ -251,6 +251,7 @@ public final class RuntimeStateService {
             app.location = appState.isLocation();
             app.recording = appState.isRecording();
             app.vpn = appState.isVpn();
+            app.overlay = appState.isOverlay();
         }
         return app;
     }
@@ -416,6 +417,8 @@ public final class RuntimeStateService {
         if (appState != null) {
             if (appState.isVisible())
                 return "应用正在前台, 已阻止冻结: " + name;
+            if (appState.isOverlay())
+                return "应用正在显示悬浮窗, 已阻止冻结: " + name;
             if (appState.isAudio() && options.keepAudio)
                 return "应用正在后台播放音频, 按设置不冻结: " + name;
             if (!forceGoogle && appState.isRecording())
@@ -467,6 +470,8 @@ public final class RuntimeStateService {
         if (appState != null) {
             if (appState.isVisible())
                 return "应用正在前台, 已阻止冻结进程 " + pid;
+            if (appState.isOverlay())
+                return "应用正在显示悬浮窗, 已阻止冻结进程 " + pid;
             if (appState.isAudio() && options.keepAudio)
                 return "应用正在后台播放音频, 按设置不冻结进程 " + pid;
             if (!forceGoogle && appState.isRecording())

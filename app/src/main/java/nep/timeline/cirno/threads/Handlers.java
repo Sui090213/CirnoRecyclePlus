@@ -13,6 +13,8 @@ public class Handlers {
     public static final Handler network = makeHandler("Network");
     public static final Handler audio = makeHandler("Audio");
     public static final Handler location = makeHandler("Location");
+    /** 悬浮窗 addWindow / 可见性 / 移除事件: 与 Activity 事件解耦, 避免互相排队. */
+    public static final Handler overlay = makeHandler("Overlay");
     public static final Handler rekernel = makeHandler("ReKernel");
     public static final Handler memory = makeHandlerBackground("Memory");
     public static final Handler log = makeHandlerBackground("Log");

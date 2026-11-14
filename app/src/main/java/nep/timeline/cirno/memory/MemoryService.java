@@ -515,7 +515,7 @@ public class MemoryService {
             return false;
 
         if (appState.isVisible() || appState.isLocation() || appState.isAudio()
-                || appState.isRecording() || appState.isVpn())
+                || appState.isRecording() || appState.isVpn() || appState.isOverlay())
             return false;
 
         if (settings.frozenOnly && !appRecord.isFrozen())
